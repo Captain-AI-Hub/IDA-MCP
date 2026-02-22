@@ -31,7 +31,7 @@ def http_get(path: str) -> Any:
         return None
 
 
-def http_post(path: str, obj: dict) -> Any:
+def http_post(path: str, obj: dict, timeout: int | None = None) -> Any:
     """POST 请求到协调器。"""
     data = json.dumps(obj).encode('utf-8')
     req = urllib.request.Request(
@@ -40,8 +40,9 @@ def http_post(path: str, obj: dict) -> Any:
         method='POST',
         headers={'Content-Type': 'application/json'}
     )
+    effective_timeout = timeout if timeout and timeout > 0 else REQUEST_TIMEOUT
     try:
-        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as r:
+        with urllib.request.urlopen(req, timeout=effective_timeout) as r:
             return json.loads(r.read().decode('utf-8') or 'null')
     except Exception as e:
         return {"error": str(e)}

@@ -92,13 +92,14 @@ def ensure_port() -> Optional[int]:
     return None
 
 
-def forward(tool: str, params: Optional[dict] = None, port: Optional[int] = None) -> Any:
+def forward(tool: str, params: Optional[dict] = None, port: Optional[int] = None, timeout: Optional[int] = None) -> Any:
     """统一转发调用到后端。
     
     参数:
         tool: 工具名称
         params: 工具参数
         port: 指定端口 (可选，未指定则使用当前选中的实例)
+        timeout: 自定义超时秒数 (可选，未指定则使用默认值)
     
     返回:
         工具调用结果，或错误字典
@@ -118,12 +119,16 @@ def forward(tool: str, params: Optional[dict] = None, port: Optional[int] = None
             return {"error": "No IDA instances available. Please ensure IDA is running with the MCP plugin loaded."}
     
     # 构造请求
-    body = {
+    body: dict = {
         "tool": tool,
         "params": params or {},
         "port": int(target_port)
     }
-    result = http_post('/call', body)
+    if timeout and timeout > 0:
+        body["timeout"] = timeout
+    # HTTP 层超时需要比协调器内部工具超时更长，留出锁获取+连接建立的余量
+    http_timeout = (timeout + 15) if (timeout and timeout > 0) else None
+    result = http_post('/call', body, timeout=http_timeout)
     
     # 处理结果
     if result is None:
