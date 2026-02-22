@@ -27,6 +27,56 @@ import threading
 import time
 from typing import Optional, Any
 
+
+class _SessionStickyMiddleware:
+    """ASGI middleware: 防止并发请求在 MCP 代理上创建多个 session。
+
+    问题: 当多个并发请求同时到达且都缺少 Mcp-Session-Id 时,
+    FastMCP 会为每个请求创建新 session, 最终导致旧 session 被终止。
+
+    方案: 捕获首次响应中的 session ID, 注入到后续缺少该 header 的请求中,
+    强制复用同一 session。若服务端返回 404 (session 已终止), 则清除缓存。
+    """
+
+    def __init__(self, app):
+        self.app = app
+        self._session_id: Optional[str] = None
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        raw_headers = list(scope.get("headers", []))
+
+        # 检查请求是否已携带 mcp-session-id
+        has_session = any(
+            k.lower() == b"mcp-session-id" for k, _ in raw_headers
+        )
+
+        # 若缺少且有缓存, 注入 session ID
+        if not has_session and self._session_id is not None:
+            raw_headers.append(
+                (b"mcp-session-id", self._session_id.encode("ascii"))
+            )
+            scope = {**scope, "headers": raw_headers}
+
+        # 包装 send 以捕获响应中的 session ID
+        middleware_self = self
+
+        async def _capture_send(message):
+            if message.get("type") == "http.response.start":
+                for k, v in message.get("headers", []):
+                    if k.lower() == b"mcp-session-id":
+                        middleware_self._session_id = v.decode("ascii")
+                        break
+                # 404 表示 session 已终止, 清除缓存
+                if message.get("status") == 404:
+                    middleware_self._session_id = None
+            await send(message)
+
+        await self.app(scope, receive, _capture_send)
+
 # ============================================================================
 # 导入共享的 server
 # ============================================================================
@@ -84,8 +134,10 @@ def start_http_proxy(host: str = "127.0.0.1", port: int = 11338, path: str = "/m
                     except Exception:
                         pass
                 
-                # 使用共享的 server 创建 HTTP app
+                # 使用共享的 server 创建 HTTP app，并包装 session 粘滞中间件
+                # 防止并发请求创建多个 MCP session
                 app = server.http_app(path=path)
+                app = _SessionStickyMiddleware(app)
                 
                 import uvicorn
                 config = uvicorn.Config(app, host=host, port=port, log_level="warning", access_log=False)
