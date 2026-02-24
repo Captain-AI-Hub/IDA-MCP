@@ -39,6 +39,7 @@ import proxy_modify  # type: ignore
 import proxy_memory  # type: ignore
 import proxy_types  # type: ignore
 import proxy_debug  # type: ignore
+import proxy_python  # type: ignore
 import proxy_stack  # type: ignore
 
 
@@ -133,5 +134,6 @@ proxy_modify.register_tools(server)
 proxy_memory.register_tools(server)
 proxy_types.register_tools(server)
 proxy_debug.register_tools(server)
+proxy_python.register_tools(server)
 proxy_stack.register_tools(server)
 

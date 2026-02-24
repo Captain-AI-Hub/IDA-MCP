@@ -63,6 +63,7 @@ from . import api_types
 from . import api_modify
 from . import api_stack
 from . import api_debug
+from . import api_python
 from . import api_resources
 
 # 导入协调器模块
