@@ -55,6 +55,6 @@ if __name__ == "__main__":
         signal.signal(signal.SIGTERM, _signal_handler)
     
     try:
-        server.run()
+        server.run(show_banner=False)
     except KeyboardInterrupt:
         pass  # 静默退出
