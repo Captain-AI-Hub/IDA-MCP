@@ -99,6 +99,11 @@ _server_thread: Optional[threading.Thread] = None
 _self_pid = os.getpid()
 _current_instance_port: Optional[int] = None
 
+# 每个 IDA 实例端口一把锁，序列化对同一实例的并发 /call 请求，
+# 防止同时创建多个 MCP session 导致 session manager 崩溃。
+_call_locks: Dict[int, threading.Lock] = {}
+_call_locks_guard = threading.Lock()
+
 def _short(v: Any) -> str:
     try:
         s = json.dumps(v, ensure_ascii=False)
@@ -265,8 +270,14 @@ class _Handler(http.server.BaseHTTPRequestHandler):  # pragma: no cover
             if not isinstance(port, int):
                 self._send(500, {"error": "bad target port"})
                 return
+            # 从请求体读取可选超时（AI 可传入自定义超时）
+            req_timeout = payload.get('timeout')
+            try:
+                effective_timeout = int(req_timeout) if req_timeout and int(req_timeout) > 0 else REQUEST_TIMEOUT
+            except (ValueError, TypeError):
+                effective_timeout = REQUEST_TIMEOUT
             t0 = time.time()
-            _debug_log('CALL_BEGIN', tool=tool, target_port=port, pid=target.get('pid'), params_keys=list((params or {}).keys()))
+            _debug_log('CALL_BEGIN', tool=tool, target_port=port, pid=target.get('pid'), params_keys=list((params or {}).keys()), timeout=effective_timeout)
             # Forward the tool call over HTTP MCP (JSON-RPC) using fastmcp Client dynamically.
             # 内部通信固定使用 127.0.0.1（协调器与实例在同一台机器上）
             mcp_url = f"http://{LOCALHOST}:{port}/mcp/"
@@ -281,12 +292,24 @@ class _Handler(http.server.BaseHTTPRequestHandler):  # pragma: no cover
                 self._send(500, {"error": err_msg})
                 return
             
+            # 获取 per-port 锁，序列化对同一 IDA 实例的并发调用，
+            # 防止同时创建多个 MCP session 导致 session manager 崩溃。
+            with _call_locks_guard:
+                if port not in _call_locks:
+                    _call_locks[port] = threading.Lock()
+                call_lock = _call_locks[port]
+            
+            acquired = call_lock.acquire(timeout=effective_timeout + 5)
+            if not acquired:
+                self._send(503, {"error": f"Timed out waiting for call lock on port {port}"})
+                return
+            
             try:
                 from fastmcp import Client  # type: ignore
                 import asyncio
                 
                 async def _do():
-                    async with Client(mcp_url, timeout=REQUEST_TIMEOUT) as c:  # type: ignore
+                    async with Client(mcp_url, timeout=effective_timeout) as c:  # type: ignore
                         resp = await c.call_tool(tool, params)
                         # Extract data from response content (JSON text)
                         # fastmcp returns data in resp.content[0].text as JSON string
@@ -349,6 +372,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):  # pragma: no cover
                     self._send(500, {"error": f"call failed ({mcp_url}): {err_detail}"})
                 except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError, OSError):
                     pass  # 客户端已断开，忽略
+            finally:
+                call_lock.release()
         else:
             self._send(404, {"error": "not found"})
 

@@ -24,33 +24,36 @@ def register_tools(server: Any) -> None:
     def set_comment(
         items: Annotated[list, Field(description="List of {address, comment} objects")],
         port: Annotated[Optional[int], Field(description="Instance port override")] = None,
+        timeout: Annotated[Optional[int], Field(description="Timeout in seconds")] = None,
     ) -> Any:
         """设置注释。"""
-        return forward("set_comment", {"items": items}, port)
+        return forward("set_comment", {"items": items}, port, timeout=timeout)
     
     @server.tool(description="Rename a function.")
     def rename_function(
         address: Annotated[str, Field(description="Function address or name")],
         new_name: Annotated[str, Field(description="New function name")],
         port: Annotated[Optional[int], Field(description="Instance port override")] = None,
+        timeout: Annotated[Optional[int], Field(description="Timeout in seconds")] = None,
     ) -> Any:
         """重命名函数。"""
         return forward("rename_function", {
             "function_address": address,
             "new_name": new_name
-        }, port)
+        }, port, timeout=timeout)
     
     @server.tool(description="Rename a global variable.")
     def rename_global_variable(
         old_name: Annotated[str, Field(description="Current variable name")],
         new_name: Annotated[str, Field(description="New variable name")],
         port: Annotated[Optional[int], Field(description="Instance port override")] = None,
+        timeout: Annotated[Optional[int], Field(description="Timeout in seconds")] = None,
     ) -> Any:
         """重命名全局变量。"""
         return forward("rename_global_variable", {
             "old_name": old_name,
             "new_name": new_name
-        }, port)
+        }, port, timeout=timeout)
     
     @server.tool(description="Rename a local variable in a function.")
     def rename_local_variable(
@@ -58,18 +61,20 @@ def register_tools(server: Any) -> None:
         old_name: Annotated[str, Field(description="Current variable name")],
         new_name: Annotated[str, Field(description="New variable name")],
         port: Annotated[Optional[int], Field(description="Instance port override")] = None,
+        timeout: Annotated[Optional[int], Field(description="Timeout in seconds")] = None,
     ) -> Any:
         """重命名局部变量。"""
         return forward("rename_local_variable", {
             "function_address": function_address,
             "old_name": old_name,
             "new_name": new_name
-        }, port)
+        }, port, timeout=timeout)
     
     @server.tool(description="Patch bytes at address(es). items: [{address, bytes: [int,...] or hex_string}].")
     def patch_bytes(
         items: Annotated[list, Field(description="List of {address, bytes} objects")],
         port: Annotated[Optional[int], Field(description="Instance port override")] = None,
+        timeout: Annotated[Optional[int], Field(description="Timeout in seconds")] = None,
     ) -> Any:
         """字节补丁。"""
-        return forward("patch_bytes", {"items": items}, port)
+        return forward("patch_bytes", {"items": items}, port, timeout=timeout)
