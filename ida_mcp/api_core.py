@@ -42,6 +42,60 @@ from . import registry
 
 
 # ============================================================================
+# 字符串缓存 (避免每次调用都 rebuild strlist)
+# ============================================================================
+
+# 缓存: [(ea, length, strtype, text), ...]
+_strings_cache: list | None = None
+
+
+def _get_strings_cache() -> list:
+    """获取缓存的字符串列表，首次访问时构建。"""
+    global _strings_cache
+    if _strings_cache is None:
+        items = []
+        try:
+            strs = idautils.Strings()
+            try:
+                _ = len(strs)  # type: ignore
+            except Exception:
+                try:
+                    strs.setup(strs.default_setup)  # type: ignore
+                except Exception:
+                    pass
+            
+            for s in strs:  # type: ignore
+                try:
+                    text = str(s)
+                except Exception:
+                    continue
+                ea = int(getattr(s, 'ea', 0))
+                length = int(getattr(s, 'length', 0))
+                stype = getattr(s, 'strtype', None)
+                items.append((ea, length, stype, text))
+        except Exception:
+            pass
+        items.sort(key=lambda x: x[0])
+        _strings_cache = items
+    return _strings_cache
+
+
+def invalidate_strings_cache():
+    """清除字符串缓存 (IDB 变更后调用)。"""
+    global _strings_cache
+    _strings_cache = None
+
+
+def init_caches():
+    """在插件启动时预构建缓存。"""
+    import time
+    t0 = time.perf_counter()
+    strings = _get_strings_cache()
+    t1 = time.perf_counter()
+    print(f"[IDA-MCP] Cached {len(strings)} strings in {(t1 - t0) * 1000:.0f}ms")
+
+
+# ============================================================================
 # 实例管理
 # ============================================================================
 
@@ -323,42 +377,21 @@ def list_strings(
     if count > 1000:
         return {"error": "count too large (max 1000)"}
     
-    items: List[dict] = []
     substr = (pattern or '').lower()
+    cached = _get_strings_cache()
     
-    try:
-        strs = idautils.Strings()
-        try:
-            _ = len(strs)  # type: ignore
-        except Exception:
-            try:
-                strs.setup(strs.default_setup)  # type: ignore
-            except Exception:
-                pass
-        
-        for s in strs:  # type: ignore
-            try:
-                text = str(s)
-            except Exception:
-                continue
-            
-            if substr and substr not in text.lower():
-                continue
-            
-            ea = int(getattr(s, 'ea', 0))
-            length = int(getattr(s, 'length', 0))
-            stype = getattr(s, 'strtype', None)
-            
-            items.append({
-                'ea': ea,
-                'length': length,
-                'type': stype,
-                'text': text,
-            })
-    except Exception:
-        pass
+    if substr:
+        items = [
+            {'ea': ea, 'length': length, 'type': stype, 'text': text}
+            for ea, length, stype, text in cached
+            if substr in text.lower()
+        ]
+    else:
+        items = [
+            {'ea': ea, 'length': length, 'type': stype, 'text': text}
+            for ea, length, stype, text in cached
+        ]
     
-    items.sort(key=lambda x: x['ea'])
     return paginate(items, offset, count)  # type: ignore
 
 

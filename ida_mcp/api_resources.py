@@ -139,41 +139,24 @@ def strings_pattern_resource(pattern: str = "*") -> list:
 
 
 def _list_strings_internal(pattern: Optional[str]) -> list:
-    """内部: 列出字符串。"""
-    items: List[dict] = []
+    """内部: 列出字符串 (使用缓存)。"""
+    from .api_core import _get_strings_cache
+    
     substr = (pattern or '').lower() if pattern and pattern != "*" else ''
+    cached = _get_strings_cache()
     
-    try:
-        strs = idautils.Strings()
-        try:
-            _ = len(strs)  # type: ignore
-        except Exception:
-            try:
-                strs.setup(strs.default_setup)  # type: ignore
-            except Exception:
-                pass
-        
-        for s in strs:  # type: ignore
-            try:
-                text = str(s)
-            except Exception:
-                continue
-            
-            if substr and substr not in text.lower():
-                continue
-            
-            ea = int(getattr(s, 'ea', 0))
-            length = int(getattr(s, 'length', 0))
-            
-            items.append({
-                'ea': ea,
-                'length': length,
-                'text': text,
-            })
-    except Exception:
-        pass
+    if substr:
+        items = [
+            {'ea': ea, 'length': length, 'text': text}
+            for ea, length, _stype, text in cached
+            if substr in text.lower()
+        ]
+    else:
+        items = [
+            {'ea': ea, 'length': length, 'text': text}
+            for ea, length, _stype, text in cached
+        ]
     
-    items.sort(key=lambda x: x['ea'])
     return items
 
 

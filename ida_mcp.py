@@ -100,6 +100,23 @@ _HEARTBEAT_INTERVAL = 60                        # 心跳循环唤醒/巡检间�
 _cached_input_file: str | None = None           # 缓存的输入二进制路径 (仅主线程初始化; 心跳线程避免直接调用 IDA API)
 _cached_idb_path: str | None = None             # 缓存的 IDB 路径 (同上, 避免后台线程访问 IDA C 接口)
 
+
+def _warmup_caches():
+    """后台预构建字符串缓存，避免首次 list_strings 调用超时。
+    
+    使用 execute_sync(MFF_READ) 确保在 IDA 主线程执行 idautils.Strings()，
+    但通过守护线程调度，不阻塞当前 UI 操作。
+    """
+    def _do_warmup():
+        try:
+            from ida_mcp.api_core import init_caches
+            ida_kernwin.execute_sync(lambda: (init_caches(), 0)[1], ida_kernwin.MFF_READ)
+        except Exception as e:
+            _info(f"Cache warmup failed (non-fatal): {e}")
+    
+    t = threading.Thread(target=_do_warmup, name="IDA-MCP-CacheWarmup", daemon=True)
+    t.start()
+
 def _heartbeat_loop():
     """后台心跳: 定期确认协调器仍可访问且本实例记录存在, 否则重新注册。
 
@@ -299,11 +316,10 @@ class IDAMCPPlugin(idaapi.plugin_t if idaapi else object):  # type: ignore
             _warn("Outside IDA environment; plugin inactive.")
             return idaapi.PLUGIN_SKIP if idaapi else 0
         
-        # 全局启用批处理模式，抑制所有警告对话框（警告仍会显示在控制台）
-        try:
-            idaapi.cvar.batch = 1
-        except Exception:
-            pass
+        # 注意: 不再全局设置 idaapi.cvar.batch = 1，
+        # 因为它会禁用所有UI对话框（包括G键跳转、搜索等）。
+        # 写操作时的警告抑制已由 api_modify.py 中的
+        # suppress_ida_warnings() 上下文管理器按需临时处理。
         
         # 不自动启动, 等待用户菜单/快捷方式显式触发。
         _info("Plugin initialized and ready (not auto-starting).")
@@ -342,6 +358,8 @@ class IDAMCPPlugin(idaapi.plugin_t if idaapi else object):  # type: ignore
             port = _find_free_port(DEFAULT_PORT, host)
         _info(f"Starting MCP server at http://{host}:{port}/mcp/ (toggle to stop)")
         start_server_async(host, port)
+        # 在后台预构建字符串缓存，避免首次 list_strings 调用超时
+        _warmup_caches()
 
     def term(self):  # type: ignore
         _info("Plugin terminating.")
