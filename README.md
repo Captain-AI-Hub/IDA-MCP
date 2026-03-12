@@ -10,10 +10,11 @@
 
 ## IDA-MCP (FastMCP + Multi-instance Coordinator)
 
-* Each IDA instance starts a **FastMCP** server (`/mcp`)
-* The first instance occupies `127.0.0.1:11337` as the **coordinator**, maintaining a memory registry and supporting tool forwarding
-* Subsequent instances automatically register with the coordinator; no need to share files or manually configure ports
-* Unified access / aggregation of instance tools via a modular **proxy** (MCP clients can start it via command/args)
+* Each IDA instance starts its own **FastMCP Streamable HTTP** endpoint at `/mcp`
+* The first instance that wins `127.0.0.1:11337` becomes the internal **coordinator**, maintaining the in-memory registry and forwarding tool calls
+* The coordinator can also start the client-facing HTTP proxy on `127.0.0.1:11338` (configurable)
+* The stdio proxy is a separate subprocess entrypoint that reuses the same proxy tool set
+* MCP Resources are exposed by each IDA instance directly, not by the coordinator/proxy
 
 ## Architecture
 
@@ -35,14 +36,16 @@ The project uses a modular architecture:
 * `api_modify.py` - Comments, renaming
 * `api_stack.py` - Stack frame operations
 * `api_debug.py` - Debugger control (marked unsafe)
+* `api_python.py` - Python execution in IDA context (marked unsafe)
 * `api_resources.py` - MCP Resources (`ida://` URI patterns)
 
 ### Key Features
 
 * **Decorator Chain Pattern**: `@tool` + `@idaread`/`@idawrite` for clean API definitions
 * **Batch Operations**: Most tools accept lists for batch processing
-* **MCP Resources**: REST-like `ida://` URI patterns for read-only data access
+* **MCP Resources**: REST-like `ida://` URI patterns for read-only data access on direct instance connections
 * **Multi-instance Support**: Coordinator on port 11337 manages multiple IDA instances
+* **HTTP-first Defaults**: The bundled config defaults to `enable_http=true` and `enable_stdio=false`
 * **IDA 8.x/9.x Compatible**: Compatibility layer handles API differences
 
 ## Current Tools
@@ -104,6 +107,10 @@ The project uses a modular architecture:
 * `declare_stack` – Create stack variables
 * `delete_stack` – Delete stack variables
 
+### Python Tools (`api_python.py`) - Unsafe
+
+* `py_eval` – Execute Python code in IDA context and return `result` / `stdout` / `stderr`
+
 ### Debug Tools (`api_debug.py`) - Unsafe
 
 * `dbg_regs` – Get all registers
@@ -140,7 +147,7 @@ The project uses a modular architecture:
 
 ```text
 IDA-MCP/
-  ida_mcp.py              # Plugin entry: start/stop SSE server + register coordinator
+  ida_mcp.py              # Plugin entry: start/stop per-instance HTTP MCP server + register coordinator
   ida_mcp/
     __init__.py           # Package initialization, auto-discovery, exports
     config.py             # Configuration loader (config.conf parser)
@@ -156,6 +163,7 @@ IDA-MCP/
     api_modify.py         # Modification API
     api_stack.py          # Stack frame API
     api_debug.py          # Debugger API (unsafe)
+    api_python.py         # Python execution API (unsafe)
     api_resources.py      # MCP Resources
     registry.py           # Coordinator / multi-instance registration
     proxy/                # stdio-based MCP proxy
@@ -170,6 +178,7 @@ IDA-MCP/
       proxy_modify.py     # Modification forwarding tools
       proxy_stack.py      # Stack frame forwarding tools
       proxy_debug.py      # Debug forwarding tools
+      proxy_python.py     # Python forwarding tools
     http/                 # HTTP-based MCP proxy (auto-started, reuses stdio proxy)
       __init__.py         # HTTP module exports
       http_server.py      # HTTP transport wrapper (reuses ida_mcp_proxy.server)
@@ -181,64 +190,89 @@ IDA-MCP/
 ## Startup Steps
 
 1. Copy `ida_mcp.py` + `ida_mcp` folder to IDA's `plugins/`.
-2. Open target binary, wait for analysis to complete.
-3. Trigger plugin via menu / shortcut: First launch will:
-   * Select free port (starting from 10000) to run SSE service `http://127.0.0.1:<port>/mcp/`
-   * If 11337 is free → start coordinator; otherwise register with existing coordinator
-4. Trigger plugin again = stop and unregister instance.
+2. Open a target binary and wait for initial analysis.
+3. Start the plugin manually from IDA, or call `open_in_ida` from the proxy.
+4. On startup, the instance:
+   * selects a free instance port starting from `10000`
+   * serves MCP over `http://127.0.0.1:<instance_port>/mcp/`
+   * registers with the coordinator on `127.0.0.1:11337`
+   * starts the HTTP proxy on `11338` only in the coordinator process, and only when HTTP proxying is enabled
+5. Trigger the plugin again to stop the instance server and deregister it.
+
+`open_in_ida` is a proxy-side lifecycle tool. It launches IDA with `IDA_MCP_AUTO_START=1` and injects `-A` unless you already passed it in `extra_args`. This reduces prompts, but it does not guarantee that every IDA/loader/plugin dialog is suppressed.
+
+## Transport Overview
+
+There are three different endpoints in this project, and the distinction matters:
+
+* `127.0.0.1:11337` - internal coordinator HTTP API used for instance registry and tool forwarding
+* `127.0.0.1:11338/mcp` - client-facing HTTP MCP proxy, started by the coordinator when enabled
+* `127.0.0.1:<instance_port>/mcp/` - direct MCP endpoint owned by one specific IDA instance
+
+The bundled `mcp.json` and the current default config are centered on the HTTP proxy on port `11338`.
 
 ## Proxy Usage
-
-The proxy **simultaneously supports both transport modes** - choose whichever works best for your MCP client:
 
 ### Transport Modes
 
 | Mode | Description | Configuration |
 |------|-------------|---------------|
-| **HTTP** (recommended) | Auto-started by coordinator, no subprocess needed | Only requires `url` |
-| **stdio** | MCP client launches subprocess | Requires `command` and `args` |
-
-Both modes are always available when the IDA plugin is running.
+| **HTTP proxy** (recommended) | Connects to the coordinator-owned MCP proxy on `11338` | Only requires `url` |
+| **stdio proxy** | MCP client launches `ida_mcp/proxy/ida_mcp_proxy.py` as a subprocess | Requires `command` and `args` |
+| **Direct instance HTTP** | Connects straight to one IDA instance, mainly useful for `ida://` resources | Requires the selected instance port |
 
 **Proxy Tools:**
 
 | Category | Tools |
 |----------|-------|
 | Management | `check_connection`, `list_instances`, `select_instance` |
-| Core | `list_functions`, `get_metadata`, `list_strings`, `list_globals`, `list_local_types`, `get_entry_points`, `get_function` |
-| Analysis | `decompile`, `disasm`, `linear_disassemble`, `xrefs_to`, `xrefs_from`, `find_bytes`, `get_basic_blocks` |
-| Modify | `set_comment`, `rename_function`, `rename_global_variable`, `rename_local_variable` |
+| Lifecycle | `open_in_ida`, `close_ida` |
+| Core | `list_functions`, `get_metadata`, `list_strings`, `list_globals`, `list_local_types`, `get_entry_points`, `get_function`, `list_imports`, `list_exports`, `list_segments`, `get_cursor` |
+| Analysis | `decompile`, `disasm`, `linear_disassemble`, `xrefs_to`, `xrefs_from`, `xrefs_to_field`, `find_bytes`, `get_basic_blocks` |
+| Modify | `set_comment`, `rename_function`, `rename_global_variable`, `rename_local_variable`, `patch_bytes` |
 | Memory | `get_bytes`, `get_u8`, `get_u16`, `get_u32`, `get_u64`, `get_string` |
-| Types | `set_function_prototype`, `set_local_variable_type`, `set_global_variable_type`, `declare_type` |
+| Types | `set_function_prototype`, `set_local_variable_type`, `set_global_variable_type`, `declare_type`, `list_structs`, `get_struct_info` |
+| Stack | `stack_frame`, `declare_stack`, `delete_stack` |
+| Python | `py_eval` |
 | Debug | `dbg_start`, `dbg_continue`, `dbg_step_into`, `dbg_step_over`, `dbg_regs`, `dbg_add_bp`, `dbg_delete_bp`, ... |
 
 You can use it on Codex / Claude Code / LangChain / Cursor / VSCode / etc - any MCP client.
+
+Parameter schema is shared between the proxy and direct instance tools. For example, `rename_function` uses `address` on both sides and accepts either a symbol name or a numeric address.
 
 ### Configuration File
 
 Edit `ida_mcp/config.conf` to customize settings:
 
 ```ini
-# Coordinator settings
-# coordinator_host = "127.0.0.1"
+enable_stdio = false
+enable_http = true
+
 # coordinator_port = 11337
 
 # HTTP proxy settings
-# http_host = "127.0.0.1"  # Use 0.0.0.0 for remote access
+# http_host = "127.0.0.1"
 # http_port = 11338
 # http_path = "/mcp"
 
 # IDA instance settings
 # ida_default_port = 10000
+# ida_path = "C:\\Path\\To\\ida.exe"
 
 # General settings
 # request_timeout = 30
 # debug = false
 ```
 
-### Method 1: HTTP Mode (Recommended)
+Notes:
 
-HTTP proxy auto-starts when IDA plugin loads. Client only needs URL - no subprocess required.
+* The coordinator host and direct instance host are fixed to `127.0.0.1` in code.
+* `IDA_PATH` overrides `ida_path` from `config.conf`.
+* If both `enable_stdio` and `enable_http` are disabled, the plugin will not start the coordinator/transport stack.
+
+### Method 1: HTTP Proxy Mode (Recommended)
+
+When a coordinator is running and HTTP proxying is enabled, the client only needs the proxy URL.
 
 **Claude / Cherry Studio / Cursor example:**
 
@@ -277,9 +311,9 @@ HTTP proxy auto-starts when IDA plugin loads. Client only needs URL - no subproc
 }
 ```
 
-### Method 2: stdio Mode
+### Method 2: stdio Proxy Mode
 
-Client launches proxy as subprocess. Useful when HTTP is not available.
+The client launches the proxy as a subprocess. This proxy talks to the coordinator on `11337` and exposes the same proxy-side tools as HTTP mode.
 
 **Claude / Cherry Studio / Cursor example:**
 
@@ -307,7 +341,37 @@ Client launches proxy as subprocess. Useful when HTTP is not available.
 }
 ```
 
-⚠️ Note: Using VSCode Copilot may result in your account being banned.
+## Resources
+
+`ida://` resources are registered on the direct IDA instance server, not on the proxy server. That means:
+
+* `list_resources` / `read_resource` must connect to `http://127.0.0.1:<instance_port>/mcp/`
+* the HTTP proxy on `11338` forwards tools, but does not forward resources
+* resource payloads are returned as JSON text content, so MCP clients typically need to parse the resource text as JSON
+* resources are read-only and currently cover a subset of the read surface, not every tool-equivalent API
+
+Typical flow:
+
+1. Call `list_instances` via the proxy to find the target instance port.
+2. Open a direct MCP client to `http://127.0.0.1:<instance_port>/mcp/`.
+3. Use `list_resources` / `read_resource("ida://...")` there.
+
+## Automated Install
+
+Run:
+
+```bash
+python install.py
+```
+
+The installer:
+
+* discovers the local IDA installation on Windows, Linux, or macOS
+* uses IDA's bundled Python to run `pip install -r requirements.txt`
+* copies `ida_mcp.py` and `ida_mcp/` into IDA's `plugins/` directory
+* interactively generates the destination `ida_mcp/config.conf`
+
+Use `python install.py --dry-run` to verify detection and configuration choices without making changes.
 
 ## Dependencies
 

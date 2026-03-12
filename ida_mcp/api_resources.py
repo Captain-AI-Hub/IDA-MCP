@@ -20,36 +20,50 @@ import json
 from typing import Optional, List, Dict, Any
 import re
 
-from .rpc import resource, tool
+from .rpc import resource
 from .sync import idaread
 from .utils import hex_addr
 
 # IDA 模块导入
 try:
     import idaapi  # type: ignore
-    import idautils  # type: ignore
-    import ida_funcs  # type: ignore
-    import ida_bytes  # type: ignore
-    import ida_name  # type: ignore
 except ImportError:
     idaapi = None
+
+try:
+    import idautils  # type: ignore
+except ImportError:
     idautils = None
+
+try:
+    import ida_funcs  # type: ignore
+except ImportError:
     ida_funcs = None
+
+try:
+    import ida_bytes  # type: ignore
+except ImportError:
     ida_bytes = None
+
+try:
+    import ida_name  # type: ignore
+except ImportError:
     ida_name = None
-    ida_typeinf = None
-    ida_nalt = None
 
 try:
     import ida_typeinf  # type: ignore
+except ImportError:
+    ida_typeinf = None
+
+try:
     import ida_nalt  # type: ignore
 except ImportError:
-    pass
+    ida_nalt = None
 
 try:
     import ida_entry  # type: ignore
 except ImportError:
-    pass
+    ida_entry = None
 
 try:
     import ida_segment  # type: ignore

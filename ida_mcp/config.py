@@ -5,7 +5,7 @@
 配置项
 ====================
 传输方式开关:
-    - enable_stdio: 是否启用 stdio 模式 (默认 true)
+    - enable_stdio: 是否启用 stdio 模式 (默认 false)
     - enable_http: 是否启用 HTTP 代理模式 (默认 true)
 
 协调器配置 (内部组件，地址固定为 127.0.0.1):
@@ -275,7 +275,7 @@ def is_debug_enabled() -> bool:
 def is_stdio_enabled() -> bool:
     """是否启用 stdio 模式（协调器）。"""
     config = load_config()
-    return bool(config.get("enable_stdio", True))
+    return bool(config.get("enable_stdio", False))
 
 
 def is_http_enabled() -> bool:
