@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Annotated, Optional, List, Dict, Any, Union
 
 from .rpc import tool
-from .sync import idaread, idawrite
+from .sync import idaread, idawrite, wait_for_auto_analysis
 from .utils import parse_address, normalize_list_input, hex_addr
 
 # IDA 模块导入
@@ -44,6 +44,7 @@ def stack_frame(
     addr: Annotated[Union[int, str], "Function address(es) - single or comma-separated"],
 ) -> List[dict]:
     """Get stack frame variables for function(s)."""
+    wait_for_auto_analysis()
     queries = normalize_list_input(addr)
     results = []
     
@@ -85,6 +86,7 @@ def _stack_frame_single(query: str) -> dict:
     
     frame_variables: List[dict] = []
     local_variables: List[dict] = []
+    hexrays_error = None
     
     # 获取 IDA 栈帧结构
     # 方法 1: IDA 9.x - 使用 func.frame + tinfo_t
@@ -189,11 +191,21 @@ def _stack_frame_single(query: str) -> dict:
                         local_variables.append(var_info)
                     except Exception:
                         continue
+        else:
+            hexrays_error = "failed to init hex-rays"
     except Exception:
-        pass
+        hexrays_error = "hex-rays decompile failed"
     
     # 如果两者都为空
     if not frame_variables and not local_variables:
+        if hexrays_error:
+            return {
+                "query": query,
+                "name": fname,
+                "start_ea": hex_addr(f.start_ea),
+                "variables": [],
+                "error": hexrays_error,
+            }
         return {
             "query": query,
             "name": fname,

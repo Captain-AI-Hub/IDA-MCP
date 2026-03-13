@@ -133,8 +133,14 @@ def _read_int(addr: Union[int, str], size: int, signed: bool = False) -> List[di
                 results.append({"error": "failed to read", "query": query, "address": hex_addr(address)})
                 continue
             
-            # 小端序解析
-            value = int.from_bytes(data, byteorder='little', signed=signed)
+            endian = 'little'
+            try:
+                inf = idaapi.get_inf_structure()
+                if hasattr(inf, 'is_be') and inf.is_be():
+                    endian = 'big'
+            except Exception:
+                pass
+            value = int.from_bytes(data, byteorder=endian, signed=signed)
             
             results.append({
                 "query": query,
@@ -207,5 +213,4 @@ def get_string(
             results.append({"error": str(e), "query": query, "address": hex_addr(address)})
     
     return results
-
 

@@ -127,13 +127,14 @@ def get_tool_info(fn: Callable) -> dict:
         "name": fn.__name__,
         "description": description,
         "parameters": params,
-        "is_unsafe": getattr(fn, '_unsafe', False),
+        "is_unsafe": is_unsafe(fn),
     }
 
 
 def is_unsafe(fn: Callable) -> bool:
     """检查函数是否标记为 unsafe。"""
-    return getattr(fn, '_unsafe', False)
+    module_name = getattr(fn, "__module__", "")
+    return bool(getattr(fn, '_unsafe', False) or module_name.endswith(".api_debug"))
 
 
 def clear_registry():

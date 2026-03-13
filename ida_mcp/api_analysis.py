@@ -15,7 +15,7 @@ from __future__ import annotations
 from typing import Annotated, Optional, List, Dict, Any, Union
 
 from .rpc import tool
-from .sync import idaread
+from .sync import idaread, wait_for_auto_analysis
 from .utils import parse_address, hex_addr
 
 # IDA 模块导入
@@ -49,6 +49,7 @@ def decompile(
     addr: Annotated[Union[int, str], "Function address or name (single or comma-separated)"],
 ) -> List[dict]:
     """Decompile function(s) at given address(es). Requires Hex-Rays."""
+    wait_for_auto_analysis()
     # 解析地址列表
     from .utils import normalize_list_input
     queries = normalize_list_input(addr)
@@ -134,6 +135,7 @@ def disasm(
     addr: Annotated[Union[int, str], "Function address(es) - single or comma-separated"],
 ) -> List[dict]:
     """Disassemble function(s) with full details."""
+    wait_for_auto_analysis()
     from .utils import normalize_list_input
     queries = normalize_list_input(addr)
     
@@ -566,6 +568,7 @@ def find_bytes(
     limit: Annotated[int, "Max results (1..1000)"] = 100,
 ) -> dict:
     """Search for byte pattern with wildcards (?? for any byte)."""
+    wait_for_auto_analysis()
     if not pattern or not pattern.strip():
         return {"error": "empty pattern"}
     if limit < 1 or limit > 1000:
@@ -709,6 +712,7 @@ def get_basic_blocks(
     addr: Annotated[Union[int, str], "Function address or name"],
 ) -> dict:
     """Get basic blocks with control flow information."""
+    wait_for_auto_analysis()
     # 解析地址
     parsed = parse_address(addr)
     if not parsed["ok"]:
@@ -791,4 +795,3 @@ def get_basic_blocks(
         "total": len(blocks),
         "blocks": blocks,
     }
-

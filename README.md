@@ -45,7 +45,7 @@ The project uses a modular architecture:
 * **Batch Operations**: Most tools accept lists for batch processing
 * **MCP Resources**: REST-like `ida://` URI patterns for read-only data access on direct instance connections
 * **Multi-instance Support**: Coordinator on port 11337 manages multiple IDA instances
-* **HTTP-first Defaults**: The bundled config defaults to `enable_http=true` and `enable_stdio=false`
+* **HTTP-first Defaults**: The bundled config defaults to `enable_http=true`, `enable_stdio=false`, and `enable_unsafe=true`
 * **IDA 8.x/9.x Compatible**: Compatibility layer handles API differences
 
 ## Current Tools
@@ -233,7 +233,7 @@ The bundled `mcp.json` and the current default config are centered on the HTTP p
 
 You can use it on Codex / Claude Code / LangChain / Cursor / VSCode / etc - any MCP client.
 
-Parameter schema is shared between the proxy and direct instance tools. For example, `rename_function` uses `address` on both sides and accepts either a symbol name or a numeric address.
+Parameter schema is shared between the proxy and direct instance tools. For example, `rename_function` uses `address` on both sides and accepts either a symbol name or a numeric address. For multi-instance usage, prefer passing `port` explicitly on proxy tools instead of relying on a process-wide selected instance.
 
 ### Configuration File
 
@@ -242,6 +242,7 @@ Edit `ida_mcp/config.conf` to customize settings:
 ```ini
 enable_stdio = false
 enable_http = true
+enable_unsafe = true
 
 # coordinator_port = 11337
 
@@ -263,6 +264,7 @@ Notes:
 
 * The coordinator host and direct instance host are fixed to `127.0.0.1` in code.
 * `IDA_PATH` overrides `ida_path` from `config.conf`.
+* `IDA_MCP_ENABLE_UNSAFE=1|0` overrides `enable_unsafe` from `config.conf`.
 * `open_in_ida` no longer accepts an `ida_path` tool argument; configure the IDA executable through `IDA_PATH` or `config.conf`.
 * WSL is supported: you can run the tooling inside WSL and still launch a Windows IDA binary through `open_in_ida`.
 * If both `enable_stdio` and `enable_http` are disabled, the plugin will not start the coordinator/transport stack.

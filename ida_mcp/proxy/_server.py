@@ -16,12 +16,11 @@ except ImportError:
 
 from fastmcp import FastMCP
 
-from ._http import http_get, http_post
+from ._http import http_get
 from ._state import (
+    choose_port,
     get_instances,
     is_valid_port,
-    get_current_port,
-    set_current_port,
 )
 from . import register_tools
 
@@ -65,7 +64,7 @@ server = FastMCP(
 栈帧工具:
 - stack_frame, declare_stack, delete_stack
 
-多实例时请先用 list_instances 查看可用实例，再用 select_instance 选择目标。
+多实例时请先用 list_instances 查看可用实例，并优先在工具参数里显式传递 port。
 """
 )
 
@@ -89,25 +88,21 @@ def list_instances() -> list:
     return get_instances()
 
 
-@server.tool(description="Select default IDA instance by port. If port omitted, auto-selects (prefer 10000). Returns {selected_port} or {error}.")
+@server.tool(description="Choose a recommended IDA instance port. If port omitted, auto-selects (prefer 10000). Returns {selected_port} or {error}.")
 def select_instance(
     port: Annotated[Optional[int], Field(description="Target port; omit for auto-select")] = None
 ) -> dict:
-    """选择默认目标实例。"""
-    payload = {"port": port} if port is not None else {}
-    res = http_post('/select_instance', payload)
-    
-    if isinstance(res, dict) and is_valid_port(res.get('selected_port')):
-        set_current_port(int(res['selected_port']))
-        return {"selected_port": get_current_port()}
-    
-    # 错误处理
+    """选择推荐目标实例，不写入跨客户端共享状态。"""
+    selected_port = choose_port(port)
+    if selected_port is not None:
+        return {"selected_port": selected_port}
+
     instances = get_instances()
     if not instances:
         return {"error": "No IDA instances available"}
     if port is not None and not any(i.get('port') == port for i in instances):
         return {"error": f"Port {port} not found in registered instances"}
-    
+
     return {"error": "Failed to select instance"}
 
 

@@ -4,8 +4,8 @@
 1. 通过 FastMCP 客户端访问各种 ida:// URI 资源
 2. 验证资源返回格式
 3. 记录测试结果到 .artifacts/api_logs/ 目录
-   - stdio 模式: stdio_uri.json
-   - http 模式: http_uri.json
+   - 资源测试始终直连实例 HTTP 端点
+   - stdio/http 仅作为日志标签，表示当前测试上下文
 
 运行方式：
     pytest -m resources           # 只运行 resources 模块测试
@@ -170,7 +170,7 @@ async def _read_resource_async(uri: str, port: int, transport: str = "stdio") ->
         transport: 传输模式 ("stdio" 或 "http")
     
     注意：Resources 只在 IDA 实例中定义，proxy 不支持 resources。
-    因此无论是 stdio 还是 http 模式，resource 测试都直接连接到 IDA 实例。
+    因此这里始终直接连接到 IDA 实例 HTTP 端点；transport 参数仅用于日志标签。
     """
     start_time = time.perf_counter()
     
@@ -225,7 +225,7 @@ def read_resource(uri: str, port: int, transport: str = "stdio") -> Dict[str, An
 async def _list_resources_async(port: int, transport: str = "stdio") -> Dict[str, Any]:
     """列出所有可用资源。
     
-    注意：Resources 只在 IDA 实例中定义，直接连接到实例。
+    注意：Resources 只在 IDA 实例中定义，直接连接到实例 HTTP 端点。
     """
     start_time = time.perf_counter()
     

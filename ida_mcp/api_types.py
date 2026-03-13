@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Annotated, Optional, List, Dict, Any, Union
 
 from .rpc import tool
-from .sync import idaread, idawrite
+from .sync import idaread, idawrite, wait_for_auto_analysis
 from .utils import parse_address, is_valid_c_identifier, hex_addr
 
 # IDA 模块导入
@@ -305,6 +305,7 @@ def set_local_variable_type(
     new_type: Annotated[str, "C type fragment (e.g. int, char *, MyStruct *)"],
 ) -> dict:
     """Set local variable type (Hex-Rays)."""
+    wait_for_auto_analysis()
     if function_address is None:
         return {"error": "invalid function_address"}
     if not variable_name:
@@ -393,7 +394,12 @@ def set_local_variable_type(
     
     # 应用
     try:
-        applied = ida_hexrays.set_lvar_type(cfunc, target, tinfo)  # type: ignore
+        if hasattr(target, "set_lvar_type"):
+            applied = target.set_lvar_type(tinfo)  # type: ignore[attr-defined]
+        elif hasattr(cfunc, "set_lvar_type"):
+            applied = cfunc.set_lvar_type(target, tinfo)  # type: ignore[attr-defined]
+        else:
+            return {"error": "set_lvar_type API not available"}
     except Exception as e:
         return {"error": f"set_lvar_type failed: {e}"}
     

@@ -138,12 +138,9 @@ def _debug_log(event: str, **fields: Any):  # pragma: no cover
                 ida_kernwin.execute_sync(_emit, ida_kernwin.MFF_READ)  # type: ignore
             except Exception:
                 try:
-                    ida_kernwin.msg(line)  # type: ignore
+                    print(line, end='')
                 except Exception:
-                    try:
-                        print(line, end='')
-                    except Exception:
-                        pass
+                    pass
         else:
             print(line, end='')
     except Exception:
@@ -415,9 +412,9 @@ def _log_info(msg: str):  # pragma: no cover
                 ida_kernwin.execute_sync(_emit, ida_kernwin.MFF_READ)
             except Exception:
                 try:
-                    ida_kernwin.msg(line)
-                except Exception:
                     print(line, end='')
+                except Exception:
+                    pass
         else:
             print(line, end='')
     except Exception:
@@ -459,8 +456,14 @@ def init_and_register(port: int, input_file: str | None, idb_path: str | None):
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             s.bind((COORD_HOST, COORD_PORT))
             s.close()
-            _is_coordinator = True
             _start_coordinator()
+            for _ in range(50):
+                if _coordinator_alive():
+                    _is_coordinator = True
+                    break
+                time.sleep(0.05)
+            else:
+                _is_coordinator = False
         except OSError:
             _is_coordinator = False
     payload = {

@@ -287,15 +287,17 @@ def http_post(url: str, data: dict, timeout: float = 10.0) -> Any:
 
 
 def call_tool_stdio(tool_name: str, params: dict, port: Optional[int] = None) -> Any:
-    """通过 coordinator 调用 IDA 工具 (stdio 模式)。"""
+    """通过 coordinator 调用 IDA 工具。
+
+    注意：测试里的“stdio”路径验证 coordinator 转发语义，不会单独拉起 stdio proxy 进程。
+    """
     if tool_name in _PROXY_ONLY_TOOLS:
         if not _is_http_proxy_available():
             data = {"error": f"HTTP proxy not available for proxy-only tool: {tool_name}"}
             _log_api_call("stdio", tool_name, params, port, data, 0.0)
             return data
-        # lifecycle 的 open_in_ida 是 proxy-side tool；测试中的“stdio”路径没有单独
-        # 启动 stdio proxy 进程，因此这里直接复用 HTTP proxy，避免错误地打到
-        # coordinator /call -> existing instance 这条链路。
+        # lifecycle 的 open_in_ida 是 proxy-side tool；测试中的“stdio”路径不单独
+        # 启动 stdio proxy 进程，因此这里复用 HTTP proxy，只验证 proxy-side 语义。
         return call_tool_http(tool_name, params, None)
 
     import time
@@ -338,11 +340,11 @@ def call_tool_http(tool_name: str, params: dict, port: Optional[int] = None) -> 
         async def _call():
             url = f"http://{HTTP_PROXY_HOST}:{HTTP_PROXY_PORT}{HTTP_PROXY_PATH}"
             async with Client(url, timeout=30) as client:
-                # 如果指定了 port，需要先选择实例
-                if port:
-                    await client.call_tool("select_instance", {"port": port})
-                
-                resp = await client.call_tool(tool_name, params)
+                call_params = dict(params)
+                if port and tool_name not in _PROXY_ONLY_TOOLS:
+                    call_params.setdefault("port", port)
+
+                resp = await client.call_tool(tool_name, call_params)
                 
                 # 提取返回数据
                 data = None

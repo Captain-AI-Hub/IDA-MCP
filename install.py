@@ -353,6 +353,7 @@ def render_config(config: dict[str, object]) -> str:
             "# Transport switches",
             f"enable_stdio = {quote_config_value(config['enable_stdio'])}",
             f"enable_http = {quote_config_value(config['enable_http'])}",
+            f"enable_unsafe = {quote_config_value(config['enable_unsafe'])}",
             "",
             "# Coordinator settings (host is fixed to 127.0.0.1 in code)",
             f"coordinator_port = {quote_config_value(config['coordinator_port'])}",
@@ -378,6 +379,7 @@ def build_config_interactively(defaults: dict[str, object], ida_executable: Path
     config = {
         "enable_stdio": bool(defaults.get("enable_stdio", False)),
         "enable_http": bool(defaults.get("enable_http", True)),
+        "enable_unsafe": bool(defaults.get("enable_unsafe", True)),
         "coordinator_port": int(defaults.get("coordinator_port", 11337)),
         "http_host": str(defaults.get("http_host", "127.0.0.1")),
         "http_port": int(defaults.get("http_port", 11338)),
@@ -391,6 +393,7 @@ def build_config_interactively(defaults: dict[str, object], ida_executable: Path
     print("\nConfigure ida_mcp/config.conf")
     config["enable_http"] = prompt_bool("Enable HTTP proxy mode", bool(config["enable_http"]))
     config["enable_stdio"] = prompt_bool("Enable stdio proxy mode", bool(config["enable_stdio"]))
+    config["enable_unsafe"] = prompt_bool("Enable unsafe tools", bool(config["enable_unsafe"]))
     config["coordinator_port"] = prompt_int("Coordinator port", int(config["coordinator_port"]))
     config["http_host"] = prompt("HTTP proxy host", str(config["http_host"]))
     config["http_port"] = prompt_int("HTTP proxy port", int(config["http_port"]))
@@ -426,6 +429,7 @@ def print_summary(
     print(f"  Plugins dir    : {plugins_dir}")
     print(f"  enable_http    : {config['enable_http']}")
     print(f"  enable_stdio   : {config['enable_stdio']}")
+    print(f"  enable_unsafe  : {config['enable_unsafe']}")
     print(f"  http endpoint  : {config['http_host']}:{config['http_port']}{config['http_path']}")
     print(f"  coordinator    : 127.0.0.1:{config['coordinator_port']}")
     print(f"  ida_default_port: {config['ida_default_port']}")

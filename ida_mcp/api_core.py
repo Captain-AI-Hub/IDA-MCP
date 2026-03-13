@@ -23,7 +23,7 @@ import hashlib
 from typing import Annotated, Optional, List, Union
 
 from .rpc import tool
-from .sync import idaread, idawrite
+from .sync import idaread, idawrite, wait_for_auto_analysis
 from .utils import parse_address, paginate, pattern_filter, normalize_arch, hex_addr
 
 # IDA 模块导入
@@ -70,6 +70,7 @@ def _get_strings_cache() -> list:
     """获取缓存的字符串列表，首次访问时构建。"""
     global _strings_cache
     if _strings_cache is None:
+        wait_for_auto_analysis()
         items = []
         try:
             strs = idautils.Strings()

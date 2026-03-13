@@ -7,6 +7,7 @@
 传输方式开关:
     - enable_stdio: 是否启用 stdio 模式 (默认 false)
     - enable_http: 是否启用 HTTP 代理模式 (默认 true)
+    - enable_unsafe: 是否启用 unsafe 工具 (默认 true)
 
 协调器配置 (内部组件，地址固定为 127.0.0.1):
     - coordinator_port: 协调器端口 (默认 11337)
@@ -39,6 +40,7 @@ _DEFAULT_CONFIG = {
     # 传输方式开关
     "enable_stdio": False,   # 是否启用 stdio 模式（协调器）
     "enable_http": True,    # 是否启用 HTTP 代理模式
+    "enable_unsafe": True,  # 是否启用 unsafe 工具
     
     # 协调器配置（地址固定为 127.0.0.1，仅端口可配置）
     "coordinator_port": 11337,
@@ -59,6 +61,21 @@ _DEFAULT_CONFIG = {
 
 # 缓存的配置
 _cached_config: Dict[str, Any] | None = None
+
+
+def _coerce_bool(value: Any, default: bool) -> bool:
+    """将配置值或环境变量值转换为布尔值。"""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        parsed = _parse_value(value)
+        if isinstance(parsed, bool):
+            return parsed
+        if isinstance(parsed, (int, float)):
+            return bool(parsed)
+    return default
 
 
 def _parse_value(value: str) -> Any:
@@ -254,3 +271,19 @@ def is_http_enabled() -> bool:
     """是否启用 HTTP 代理模式。"""
     config = load_config()
     return bool(config.get("enable_http", True))
+
+
+def is_unsafe_enabled() -> bool:
+    """是否启用 unsafe 工具。
+
+    优先级:
+    1. 环境变量 IDA_MCP_ENABLE_UNSAFE
+    2. 配置文件中的 enable_unsafe
+    3. 默认值 true
+    """
+    env_value = os.getenv("IDA_MCP_ENABLE_UNSAFE")
+    if env_value is not None:
+        return _coerce_bool(env_value, True)
+
+    config = load_config()
+    return _coerce_bool(config.get("enable_unsafe", True), True)

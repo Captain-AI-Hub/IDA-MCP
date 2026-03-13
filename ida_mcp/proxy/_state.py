@@ -5,9 +5,6 @@ from typing import Optional, Any, List
 
 from ._http import http_get, http_post
 
-# 当前选中的端口
-_current_port: Optional[int] = None
-
 
 def get_instances() -> List[dict]:
     """获取所有实例列表。"""
@@ -26,64 +23,27 @@ def is_registered_port(port: int) -> bool:
     return any(i.get('port') == port for i in instances)
 
 
-def get_current_port() -> Optional[int]:
-    """获取当前端口。"""
-    return _current_port
+def choose_port(port: Optional[int] = None) -> Optional[int]:
+    """选择目标端口。
 
-
-def set_current_port(port: int) -> None:
-    """设置当前端口。"""
-    global _current_port
-    _current_port = port
-
-
-def clear_current_port() -> None:
-    """清除当前端口。"""
-    global _current_port
-    _current_port = None
-
-
-def ensure_port() -> Optional[int]:
-    """确保有可用的目标端口。
-    
-    返回:
-        有效端口号，或 None 表示没有可用实例。
+    若显式提供 port，则只做有效性验证。
+    若未提供，则按无状态策略自动选择：
+    1. 优先端口 10000
+    2. 否则取最小已注册端口
     """
-    global _current_port
-    
-    # 已有有效端口，验证是否仍然注册
-    if is_valid_port(_current_port):
-        if is_registered_port(int(_current_port)):  # type: ignore
-            return int(_current_port)  # type: ignore
-        # 端口不再有效，清除
-        _current_port = None
-    
-    # 从协调器获取当前选中
-    res = http_get('/current_instance')
-    if isinstance(res, dict) and is_valid_port(res.get('port')):
-        port = int(res['port'])
-        if is_registered_port(port):
-            _current_port = port
-            return _current_port
-    
-    # 请求协调器自动选择
-    res = http_post('/select_instance', {})
-    if isinstance(res, dict) and is_valid_port(res.get('selected_port')):
-        port = int(res['selected_port'])
-        if is_registered_port(port):
-            _current_port = port
-            return _current_port
-    
-    # 尝试选择第一个可用实例
-    instances = get_instances()
-    if instances:
-        first_port = instances[0].get('port')
-        if isinstance(first_port, int) and is_valid_port(first_port):
-            _current_port = first_port
-            return _current_port
-    
-    # 没有可用实例
-    return None
+    if port is not None:
+        if not is_valid_port(port):
+            return None
+        return port if is_registered_port(port) else None
+
+    instances = [i for i in get_instances() if is_valid_port(i.get("port"))]
+    if not instances:
+        return None
+
+    ports = sorted(int(i["port"]) for i in instances)
+    if 10000 in ports:
+        return 10000
+    return ports[0]
 
 
 def forward(tool: str, params: Optional[dict] = None, port: Optional[int] = None, timeout: Optional[int] = None) -> Any:
@@ -108,7 +68,7 @@ def forward(tool: str, params: Optional[dict] = None, port: Optional[int] = None
         target_port = port
     else:
         # 自动选择端口
-        target_port = ensure_port()
+        target_port = choose_port()
         if target_port is None:
             return {"error": "No IDA instances available. Please ensure IDA is running with the MCP plugin loaded."}
     

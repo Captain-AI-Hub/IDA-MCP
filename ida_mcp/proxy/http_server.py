@@ -10,40 +10,6 @@ from typing import Any, Optional
 from ._server import server
 
 
-class _SessionStickyMiddleware:
-    """Reuse the same MCP session across concurrent HTTP requests."""
-
-    def __init__(self, app):
-        self.app = app
-        self._session_id: Optional[str] = None
-
-    async def __call__(self, scope, receive, send):
-        if scope["type"] != "http":
-            await self.app(scope, receive, send)
-            return
-
-        raw_headers = list(scope.get("headers", []))
-        has_session = any(key.lower() == b"mcp-session-id" for key, _ in raw_headers)
-
-        if not has_session and self._session_id is not None:
-            raw_headers.append((b"mcp-session-id", self._session_id.encode("ascii")))
-            scope = {**scope, "headers": raw_headers}
-
-        middleware_self = self
-
-        async def _capture_send(message):
-            if message.get("type") == "http.response.start":
-                for key, value in message.get("headers", []):
-                    if key.lower() == b"mcp-session-id":
-                        middleware_self._session_id = value.decode("ascii")
-                        break
-                if int(message.get("status") or 0) >= 400:
-                    middleware_self._session_id = None
-            await send(message)
-
-        await self.app(scope, receive, _capture_send)
-
-
 _http_thread: Optional[threading.Thread] = None
 _http_server: Any = None
 _http_port: Optional[int] = None
@@ -70,7 +36,7 @@ def start_http_proxy(host: str = "127.0.0.1", port: int = 11338, path: str = "/m
                     except Exception:
                         pass
 
-                app = _SessionStickyMiddleware(server.http_app(path=path))
+                app = server.http_app(path=path)
 
                 import asyncio
                 import uvicorn

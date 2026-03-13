@@ -13,7 +13,7 @@ import re
 from typing import Annotated, Optional, List, Dict, Any, Union
 
 from .rpc import tool
-from .sync import idaread, idawrite
+from .sync import idaread, idawrite, wait_for_auto_analysis
 from .utils import parse_address, is_valid_c_identifier, normalize_list_input, hex_addr
 
 # IDA 模块导入
@@ -191,6 +191,7 @@ def rename_local_variable(
     new_name: Annotated[str, "New variable name (valid C identifier)"],
 ) -> dict:
     """Rename local variable (Hex-Rays)."""
+    wait_for_auto_analysis()
     if function_address is None:
         return {"error": "invalid function_address"}
     if not old_name:
@@ -250,7 +251,13 @@ def rename_local_variable(
     
     # 重命名
     try:
-        ok = ida_hexrays.set_lvar_name(cfunc, target, new_name_clean)  # type: ignore
+        if hasattr(cfunc, "set_user_lvar_name"):
+            ok = cfunc.set_user_lvar_name(target, new_name_clean)  # type: ignore[attr-defined]
+        elif hasattr(cfunc, "set_lvar_name"):
+            ok = cfunc.set_lvar_name(target, new_name_clean, 0)  # type: ignore[attr-defined]
+        else:
+            target.name = new_name_clean
+            ok = True
     except Exception as e:
         return {"error": f"set_lvar_name failed: {e}"}
     
@@ -345,6 +352,7 @@ def patch_bytes(
     - Hex string: "90 90 90" or "909090"
     """
     results = []
+    cache_invalidated = False
     
     for item in items:
         address = item.get("address")
@@ -434,5 +442,12 @@ def patch_bytes(
         }
         
         results.append(result)
+        if patched_count > 0 and not errors and not cache_invalidated:
+            try:
+                from .api_core import invalidate_strings_cache
+                invalidate_strings_cache()
+                cache_invalidated = True
+            except Exception:
+                pass
     
     return results
