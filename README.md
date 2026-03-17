@@ -142,16 +142,24 @@ The project uses a modular architecture:
 ### MCP Resources (`api_resources.py`)
 
 * `ida://idb/metadata` – IDB metadata
-* `ida://functions` / `ida://functions/{pattern}` – Functions
+* `ida://functions` – Function list
 * `ida://function/{addr}` – Single function details
-* `ida://strings` / `ida://strings/{pattern}` – Strings
-* `ida://globals` / `ida://globals/{pattern}` – Global symbols
-* `ida://types` / `ida://types/{pattern}` – Local types
-* `ida://segments` – Segment list
-* `ida://imports` – Import list
+* `ida://function/{addr}/decompile` – Function decompilation snapshot
+* `ida://function/{addr}/disasm` – Function disassembly snapshot
+* `ida://function/{addr}/basic_blocks` – Function CFG/basic block view
+* `ida://function/{addr}/stack` – Function stack/local-variable view
+* `ida://strings` – Strings
+* `ida://globals` – Global symbols
+* `ida://types` – Local types
+* `ida://segments` / `ida://segment/{name_or_addr}` – Segment list and detail
+* `ida://imports` / `ida://imports/{module}` – Imports list and per-module view
 * `ida://exports` – Export list
+* `ida://entry_points` – Entry points
+* `ida://structs` / `ida://struct/{name}` – Struct list and detail
 * `ida://xrefs/to/{addr}` – Cross-references to address
+* `ida://xrefs/to/{addr}/summary` – Aggregated incoming xref summary
 * `ida://xrefs/from/{addr}` – Cross-references from address
+* `ida://xrefs/from/{addr}/summary` – Aggregated outgoing xref summary
 * `ida://memory/{addr}?size=N` – Read memory
 
 ## Directory Structure
@@ -363,7 +371,14 @@ The client launches the proxy as a subprocess. This proxy talks to the standalon
 * `list_resources` / `read_resource` must connect to `http://127.0.0.1:<instance_port>/mcp/`
 * the HTTP proxy on `11338` forwards tools, but does not forward resources
 * resource payloads are returned as JSON text content, so MCP clients typically need to parse the resource text as JSON
-* resources are read-only and currently cover a subset of the read surface, not every tool-equivalent API
+* resources are read-only and cover stable context views, not the full tool surface
+
+Resource payload conventions:
+
+* list resources return JSON objects shaped like `{kind, count, items}`
+* detail resources return JSON objects shaped like `{kind, address|name, ...}`
+* resource errors return `{error: {code, message, details?}}`
+* the old pattern-style resource URIs such as `ida://functions/{pattern}` were removed in favor of canonical list/detail URIs
 
 Typical flow:
 
@@ -387,6 +402,24 @@ The installer:
 * interactively generates the destination `ida_mcp/config.conf`
 
 Use `python install.py --dry-run` to verify detection and configuration choices without making changes.
+
+## Command Helper
+
+Use `command.py` for local control, scripting, and CI-friendly access:
+
+```bash
+python command.py gateway start
+python command.py gateway restart
+python command.py gateway status
+python command.py ida list
+python command.py ida open ./test/samples/simple.exe
+python command.py ida select --port 10000
+python command.py tool call get_metadata --port 10000
+python command.py resource read ida://functions --port 10000
+python command.py gateway stop --force
+```
+
+Add `--json` to any command when you need machine-readable output. Human-readable output is the default.
 
 ## Dependencies
 
