@@ -56,8 +56,8 @@
 
 ### 核心工具 (`api_core.py`)
 
-* `check_connection` – 健康检查（ok/count）
-* `list_instances` – 列出所有已注册的 IDA 实例
+* `check_connection` – 网关/注册表健康检查（ok/count）
+* `list_instances` – 列出共享网关中已注册的 IDA 实例
 * `get_metadata` – IDB 元数据（hash/arch/bits/endian）
 * `list_functions` – 分页函数列表，支持可选模式过滤
 * `get_function` – 通过名称或地址查找函数
@@ -76,6 +76,10 @@
 * `decompile` – 批量反编译函数（Hex-Rays）
 * `disasm` – 批量反汇编函数
 * `linear_disasm` – 从任意地址线性反汇编
+* `get_callers` – 按函数和调用点聚合的调用者摘要
+* `get_callees` – 按函数和调用点聚合的被调函数摘要
+* `get_function_signature` – 获取当前最可靠的函数签名字符串
+* `get_pseudocode_lines` – 获取函数的结构化伪代码行
 * `xrefs_to` – 批量获取到地址的交叉引用
 * `xrefs_from` – 批量获取从地址的交叉引用
 * `xrefs_to_field` – 启发式结构体字段引用
@@ -85,7 +89,7 @@
 ### 内存工具 (`api_memory.py`)
 
 * `get_bytes` – 读取原始字节
-* `get_u8` / `get_u16` / `get_u32` / `get_u64` – 读取整数
+* `read_scalar` – 按显式宽度读取整数
 * `get_string` – 读取空终止字符串
 
 ### 建模工具 (`api_modeling.py`)
@@ -96,11 +100,12 @@
 * `undefine_items` – 取消定义一段字节范围
 * `make_data` – 创建带类型的数据项
 * `make_string` – 创建字符串字面量
-* `create_array` – 创建带类型的数据数组
 
 ### 类型工具 (`api_types.py`)
 
-* `declare_type` – 创建/更新本地类型
+* `declare_struct` – 创建/更新本地结构体
+* `declare_enum` – 创建/更新本地枚举
+* `declare_typedef` – 创建/更新本地 typedef
 * `set_function_prototype` – 设置函数签名
 * `set_local_variable_type` – 设置局部变量类型（Hex-Rays）
 * `set_global_variable_type` – 设置全局变量类型
@@ -123,7 +128,7 @@
 
 ### Python 工具 (`api_python.py`) - 不安全
 
-* `py_eval` – 在 IDA 上下文中执行 Python 代码，返回 result/stdout/stderr
+* `py_eval` – 在 IDA 上下文中执行任意 Python 代码，返回 result/stdout/stderr
 
 ### 调试工具 (`api_debug.py`) - 不安全
 
@@ -251,13 +256,13 @@ proxy 通过 HTTP 和 stdio 暴露同一套转发工具：
 | 类别 | 工具 |
 |------|------|
 | 管理 | `check_connection`, `list_instances`, `select_instance` |
-| 生命周期 | `open_in_ida`, `close_ida` |
-| 核心 | `list_functions`, `get_metadata`, `list_strings`, `list_globals`, `list_local_types`, `get_entry_points`, `get_function`, `list_imports`, `list_exports`, `list_segments`, `get_cursor` |
-| 分析 | `decompile`, `disasm`, `linear_disasm`, `xrefs_to`, `xrefs_from`, `xrefs_to_field`, `find_bytes`, `get_basic_blocks` |
-| 建模 | `create_function`, `delete_function`, `make_code`, `undefine_items`, `make_data`, `make_string`, `create_array` |
+| 生命周期 | `open_in_ida`, `close_ida`, `shutdown_gateway` |
+| 核心 | `list_functions`, `get_metadata`, `list_strings`, `list_globals`, `list_local_types`, `get_entry_points`, `convert_number`, `get_function`, `list_imports`, `list_exports`, `list_segments`, `get_cursor` |
+| 分析 | `decompile`, `disasm`, `linear_disasm`, `get_callers`, `get_callees`, `get_function_signature`, `get_pseudocode_lines`, `xrefs_to`, `xrefs_from`, `xrefs_to_field`, `find_bytes`, `get_basic_blocks` |
+| 建模 | `create_function`, `delete_function`, `make_code`, `undefine_items`, `make_data`, `make_string` |
 | 修改 | `set_comment`, `rename_function`, `rename_global_variable`, `rename_local_variable`, `patch_bytes` |
-| 内存 | `get_bytes`, `get_u8`, `get_u16`, `get_u32`, `get_u64`, `get_string` |
-| 类型 | `set_function_prototype`, `set_local_variable_type`, `set_global_variable_type`, `declare_type`, `list_structs`, `get_struct_info` |
+| 内存 | `get_bytes`, `read_scalar`, `get_string` |
+| 类型 | `set_function_prototype`, `set_local_variable_type`, `set_global_variable_type`, `declare_struct`, `declare_enum`, `declare_typedef`, `list_structs`, `get_struct_info` |
 | 栈帧 | `stack_frame`, `declare_stack`, `delete_stack` |
 | Python | `py_eval` |
 | 调试 | `dbg_start`, `dbg_continue`, `dbg_step_into`, `dbg_step_over`, `dbg_regs`, `dbg_add_bp`, `dbg_delete_bp`, ... |

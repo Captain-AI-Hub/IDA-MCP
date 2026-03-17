@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Optional, Any, List
 
+from ..errors import error_payload, normalize_error_payload
 from ._http import http_get, http_post
 
 
@@ -40,7 +41,7 @@ def choose_port(port: Optional[int] = None) -> Optional[int]:
     if not instances:
         return None
 
-    ports = sorted(int(i["port"]) for i in instances)
+    ports = sorted(int(i.get("port")) for i in instances if is_valid_port(i.get("port")))
     if 10000 in ports:
         return 10000
     return ports[0]
@@ -62,15 +63,22 @@ def forward(tool: str, params: Optional[dict] = None, port: Optional[int] = None
     if port is not None:
         # 用户指定了端口，验证有效性
         if not is_valid_port(port):
-            return {"error": f"Invalid port: {port}. Port must be 1-65535."}
+            return error_payload("invalid_port", f"Invalid port: {port}. Port must be 1-65535.", port=port)
         if not is_registered_port(port):
-            return {"error": f"Port {port} not found in registered instances. Use list_instances to check available instances."}
+            return error_payload(
+                "instance_not_found",
+                f"Port {port} not found in registered instances. Use list_instances to check available instances.",
+                port=port,
+            )
         target_port = port
     else:
         # 自动选择端口
         target_port = choose_port()
         if target_port is None:
-            return {"error": "No IDA instances available. Please ensure IDA is running with the MCP plugin loaded."}
+            return error_payload(
+                "no_instances",
+                "No IDA instances available. Please ensure IDA is running with the MCP plugin loaded.",
+            )
     
     # 构造请求
     body: dict = {
@@ -86,12 +94,21 @@ def forward(tool: str, params: Optional[dict] = None, port: Optional[int] = None
     
     # 处理结果
     if result is None:
-        return {"error": "Failed to connect to gateway. Ensure the standalone gateway is running and reachable."}
+        return error_payload(
+            "gateway_unavailable",
+            "Failed to connect to gateway. Ensure the standalone gateway is running and reachable.",
+        )
     
     # 提取实际数据
     if isinstance(result, dict):
         if 'error' in result:
-            return result
+            return normalize_error_payload(
+                result,
+                "tool_call_failed",
+                f"Gateway rejected proxy call for tool {tool}.",
+                tool=tool,
+                port=target_port,
+            )
         if 'data' in result:
             return result['data']
     

@@ -13,6 +13,7 @@ import re
 from typing import Annotated, Optional, List, Dict, Any, Union
 
 from .rpc import tool
+from .strings_cache import invalidate_strings_cache
 from .sync import idaread, idawrite, wait_for_auto_analysis
 from .utils import parse_address, is_valid_c_identifier, normalize_list_input, hex_addr
 
@@ -34,6 +35,10 @@ except ImportError:
     ida_kernwin = None
     idc = None
 from contextlib import contextmanager
+
+
+def _invalidate_strings_cache() -> None:
+    invalidate_strings_cache()
 
 @contextmanager
 def suppress_ida_warnings():
@@ -442,12 +447,8 @@ def patch_bytes(
         }
         
         results.append(result)
-        if patched_count > 0 and not errors and not cache_invalidated:
-            try:
-                from .api_core import invalidate_strings_cache
-                invalidate_strings_cache()
-                cache_invalidated = True
-            except Exception:
-                pass
+        if patched_count > 0 and not cache_invalidated:
+            _invalidate_strings_cache()
+            cache_invalidated = True
     
     return results

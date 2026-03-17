@@ -96,6 +96,10 @@ _API_CATEGORIES = {
     "decompile": "analysis",
     "disasm": "analysis",
     "linear_disasm": "analysis",
+    "get_callers": "analysis",
+    "get_callees": "analysis",
+    "get_function_signature": "analysis",
+    "get_pseudocode_lines": "analysis",
     "xrefs_to": "analysis",
     "xrefs_from": "analysis",
     "xrefs_to_field": "analysis",
@@ -104,10 +108,7 @@ _API_CATEGORIES = {
     
     # Memory
     "get_bytes": "memory",
-    "get_u8": "memory",
-    "get_u16": "memory",
-    "get_u32": "memory",
-    "get_u64": "memory",
+    "read_scalar": "memory",
     "get_string": "memory",
     
     # Modify
@@ -122,10 +123,11 @@ _API_CATEGORIES = {
     "undefine_items": "modeling",
     "make_data": "modeling",
     "make_string": "modeling",
-    "create_array": "modeling",
     
     # Types
-    "declare_type": "types",
+    "declare_struct": "types",
+    "declare_enum": "types",
+    "declare_typedef": "types",
     "set_function_prototype": "types",
     "set_local_variable_type": "types",
     "set_global_variable_type": "types",
@@ -177,6 +179,8 @@ def _is_proxy_transport_error(result: Any) -> bool:
     if not isinstance(result, dict):
         return False
     error = result.get("error")
+    if isinstance(error, dict):
+        error = error.get("message", "")
     if not isinstance(error, str):
         return False
     return (

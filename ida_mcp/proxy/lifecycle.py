@@ -25,7 +25,7 @@ def _cleanup_reserved_launch_ports(now: Optional[float] = None) -> None:
     """Drop stale or already-registered launch reservations."""
     now = time.monotonic() if now is None else now
     registered_ports = {
-        int(instance["port"])
+        int(instance.get("port"))
         for instance in get_instances()
         if isinstance(instance, dict) and isinstance(instance.get("port"), int)
     }
@@ -54,7 +54,7 @@ def _reserve_launch_port() -> int:
     with _RESERVED_LAUNCH_PORTS_LOCK:
         _cleanup_reserved_launch_ports()
         blocked_ports = {
-            int(instance["port"])
+            int(instance.get("port"))
             for instance in get_instances()
             if isinstance(instance, dict) and isinstance(instance.get("port"), int)
         }

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import Annotated, Optional, List, Dict, Any, Union
 
-from .rpc import tool
+from .rpc import tool, unsafe
 from .sync import idaread, idawrite
 from .utils import parse_address, normalize_list_input, hex_addr
 
@@ -33,6 +33,24 @@ except ImportError:
     idaapi = None
     ida_funcs = None
     ida_dbg = None
+
+
+def _breakpoint_exists(address: int) -> bool:
+    try:
+        if hasattr(ida_dbg, 'get_bpt_flags'):
+            return ida_dbg.get_bpt_flags(address) != -1  # type: ignore
+    except Exception:
+        pass
+    return False
+
+
+def _delete_breakpoint(address: int) -> bool:
+    try:
+        if hasattr(ida_dbg, 'del_bpt'):
+            return bool(ida_dbg.del_bpt(address))
+    except Exception:
+        pass
+    return False
 
 def _wait_for_debugger_event(timeout_ms: int = 1000) -> bool:
     """等待调试器事件并处理。返回调试器是否处于暂停状态。"""
@@ -74,6 +92,7 @@ def _wait_for_debugger_event(timeout_ms: int = 1000) -> bool:
 # 寄存器
 # ============================================================================
 
+@unsafe
 @tool
 @idaread
 def dbg_regs() -> dict:
@@ -135,6 +154,7 @@ def dbg_regs() -> dict:
 # 调用栈
 # ============================================================================
 
+@unsafe
 @tool
 @idaread
 def dbg_callstack() -> dict:
@@ -212,6 +232,7 @@ def dbg_callstack() -> dict:
 # 断点
 # ============================================================================
 
+@unsafe
 @tool
 @idaread
 def dbg_list_bps() -> dict:
@@ -281,6 +302,7 @@ def dbg_list_bps() -> dict:
 # 调试控制
 # ============================================================================
 
+@unsafe
 @tool
 @idawrite
 def dbg_start() -> dict:
@@ -329,6 +351,7 @@ def dbg_start() -> dict:
     return {"ok": ok, "started": ok, "pid": pid, "suspended": suspended}
 
 
+@unsafe
 @tool
 @idawrite
 def dbg_exit() -> dict:
@@ -347,6 +370,7 @@ def dbg_exit() -> dict:
     return {"ok": True, "exited": True}
 
 
+@unsafe
 @tool
 @idawrite
 def dbg_continue() -> dict:
@@ -384,6 +408,7 @@ def dbg_continue() -> dict:
     return {"ok": True, "continued": bool(cont_ok)}
 
 
+@unsafe
 @tool
 @idawrite
 def dbg_run_to(
@@ -423,12 +448,7 @@ def dbg_run_to(
     # 回退: 设置临时断点
     if not requested:
         try:
-            has_bp = False
-            try:
-                if hasattr(ida_dbg, 'get_bpt_flags'):
-                    has_bp = ida_dbg.get_bpt_flags(address) != -1  # type: ignore
-            except Exception:
-                has_bp = False
+            has_bp = _breakpoint_exists(address)
             
             if not has_bp and hasattr(ida_dbg, 'add_bpt'):
                 try:
@@ -447,6 +467,8 @@ def dbg_run_to(
     
     # 继续执行
     continued = False
+    suspended = False
+    cleaned_temp_bpt = None
     try:
         if hasattr(ida_dbg, 'continue_process'):
             continued = bool(ida_dbg.continue_process())
@@ -456,13 +478,26 @@ def dbg_run_to(
             notes.append('no continue API')
     except Exception as e:
         notes.append(f'continue error: {e}')
+
+    if used_temp_bpt:
+        if continued:
+            suspended = _wait_for_debugger_event(2000)
+            if not suspended:
+                notes.append('timed out waiting for temporary breakpoint to trigger')
+        else:
+            notes.append('continue failed after creating temporary breakpoint')
+        cleaned_temp_bpt = _delete_breakpoint(address)
+        if not cleaned_temp_bpt and _breakpoint_exists(address):
+            notes.append('failed to clean temporary breakpoint')
     
     ok = requested or used_temp_bpt
     result: dict = {
         'ok': ok,
         'requested': requested,
         'continued': continued,
+        'suspended': suspended if used_temp_bpt else None,
         'used_temp_bpt': used_temp_bpt,
+        'cleaned_temp_bpt': cleaned_temp_bpt,
     }
     if notes:
         result['note'] = '; '.join(notes)[:300]
@@ -474,6 +509,7 @@ def dbg_run_to(
 # 断点操作
 # ============================================================================
 
+@unsafe
 @tool
 @idawrite
 def dbg_add_bp(
@@ -504,8 +540,7 @@ def _set_breakpoint_single(query: str) -> dict:
     existed = False
     
     try:
-        if hasattr(ida_dbg, 'get_bpt_flags'):
-            existed = ida_dbg.get_bpt_flags(address) != -1  # type: ignore
+        existed = _breakpoint_exists(address)
     except Exception:
         existed = False
     
@@ -548,6 +583,7 @@ def _set_breakpoint_single(query: str) -> dict:
     return result
 
 
+@unsafe
 @tool
 @idawrite
 def dbg_delete_bp(
@@ -578,8 +614,7 @@ def _delete_breakpoint_single(query: str) -> dict:
     existed = False
     
     try:
-        if hasattr(ida_dbg, 'get_bpt_flags'):
-            existed = ida_dbg.get_bpt_flags(address) != -1  # type: ignore
+        existed = _breakpoint_exists(address)
     except Exception:
         existed = False
     
@@ -587,7 +622,7 @@ def _delete_breakpoint_single(query: str) -> dict:
     if existed:
         try:
             if hasattr(ida_dbg, 'del_bpt'):
-                deleted = bool(ida_dbg.del_bpt(address))
+                deleted = _delete_breakpoint(address)
             else:
                 notes.append('no del_bpt API')
         except Exception as e:
@@ -608,6 +643,7 @@ def _delete_breakpoint_single(query: str) -> dict:
     return result
 
 
+@unsafe
 @tool
 @idawrite
 def dbg_enable_bp(
@@ -706,6 +742,7 @@ def _enable_breakpoint_single(address: int, enable: bool) -> dict:
 # 单步执行
 # ============================================================================
 
+@unsafe
 @tool
 @idawrite
 def dbg_step_into() -> dict:
@@ -743,6 +780,7 @@ def dbg_step_into() -> dict:
     return {"ok": True, "stepped": bool(step_ok)}
 
 
+@unsafe
 @tool
 @idawrite
 def dbg_step_over() -> dict:
@@ -784,6 +822,7 @@ def dbg_step_over() -> dict:
 # 调试内存操作
 # ============================================================================
 
+@unsafe
 @tool
 @idaread
 def dbg_read_mem(
@@ -824,7 +863,7 @@ def dbg_read_mem(
             
             results.append({
                 "address": hex_addr(address),
-                "size": hex_addr(len(byte_list)),
+                "size": len(byte_list),
                 "bytes": byte_list,
                 "hex": hex_str,
                 "error": None,
@@ -835,6 +874,7 @@ def dbg_read_mem(
     return results
 
 
+@unsafe
 @tool
 @idawrite
 def dbg_write_mem(
@@ -870,7 +910,7 @@ def dbg_write_mem(
             
             results.append({
                 "address": hex_addr(address),
-                "size": hex_addr(len(byte_data)),
+                "size": len(byte_data),
                 "written": written,
                 "error": None,
             })

@@ -12,7 +12,7 @@ import traceback
 from typing import Annotated
 
 from .rpc import tool, unsafe
-from .sync import idaread
+from .sync import idawrite
 
 # IDA 模块导入
 try:
@@ -59,7 +59,7 @@ def _lazy_import(module_name: str):
 
 @unsafe
 @tool
-@idaread
+@idawrite
 def py_eval(
     code: Annotated[str, "Python code to execute in IDA context"],
 ) -> dict:

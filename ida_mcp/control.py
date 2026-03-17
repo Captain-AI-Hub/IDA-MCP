@@ -21,18 +21,7 @@ from .config import (
 )
 from .proxy._http import http_post
 from .proxy._state import choose_port, get_instances, is_registered_port, is_valid_port
-
-
-def error_payload(code: str, message: str, **details: Any) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "error": {
-            "code": code,
-            "message": message,
-        }
-    }
-    if details:
-        payload["error"]["details"] = details
-    return payload
+from .errors import error_payload, normalize_error_payload
 
 
 def gateway_status_payload() -> dict[str, Any]:
@@ -141,7 +130,13 @@ def call_tool(
     if not isinstance(raw, dict):
         return error_payload("gateway_unavailable", "Failed to connect to the gateway.")
     if "error" in raw:
-        return error_payload("tool_call_failed", str(raw["error"]), tool=tool_name)
+        return normalize_error_payload(
+            raw,
+            "tool_call_failed",
+            f"Gateway rejected tool call for {tool_name}.",
+            tool=tool_name,
+            port=selection["selected_port"],
+        )
     return {
         "tool": tool_name,
         "selected_port": selection["selected_port"],

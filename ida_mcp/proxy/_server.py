@@ -16,6 +16,7 @@ except ImportError:
 
 from fastmcp import FastMCP
 
+from ..errors import error_payload
 from ._http import http_get
 from ._state import (
     choose_port,
@@ -44,7 +45,7 @@ server = FastMCP(
 - shutdown_gateway: 安全关闭独立网关进程
 
 核心工具:
-- list_functions, get_metadata, list_strings, list_globals, list_local_types, get_entry_points
+- list_functions, get_metadata, list_strings, list_globals, list_local_types, get_entry_points, convert_number
 
 分析工具:
 - decompile, disasm, linear_disasm, xrefs_to, xrefs_from, get_function
@@ -53,10 +54,10 @@ server = FastMCP(
 - set_comment, rename_function, rename_global_variable, rename_local_variable
 
 内存工具:
-- get_bytes, get_u8, get_u16, get_u32, get_u64, get_string
+- get_bytes, read_scalar, get_string
 
 类型工具:
-- set_function_prototype, set_local_variable_type, set_global_variable_type, declare_type
+- set_function_prototype, set_local_variable_type, set_global_variable_type, declare_struct, declare_enum, declare_typedef
 
 调试工具:
 - dbg_start, dbg_exit, dbg_continue, dbg_step_into, dbg_step_over
@@ -100,11 +101,11 @@ def select_instance(
 
     instances = get_instances()
     if not instances:
-        return {"error": "No IDA instances available"}
+        return error_payload("no_instances", "No IDA instances available.")
     if port is not None and not any(i.get('port') == port for i in instances):
-        return {"error": f"Port {port} not found in registered instances"}
+        return error_payload("instance_not_found", f"Port {port} not found in registered instances.", port=port)
 
-    return {"error": "Failed to select instance"}
+    return error_payload("selection_failed", "Failed to select instance.")
 
 
 # ============================================================================

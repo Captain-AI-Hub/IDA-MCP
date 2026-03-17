@@ -53,8 +53,8 @@ The project uses a modular architecture:
 
 ### Core Tools (`api_core.py`)
 
-* `check_connection` – Health check (ok/count)
-* `list_instances` – List all registered IDA instances
+* `check_connection` – Gateway/registry health check (ok/count)
+* `list_instances` – List all IDA instances registered in the shared gateway
 * `get_metadata` – IDB metadata (hash/arch/bits/endian)
 * `list_functions` – Paginated function list with optional pattern filter
 * `get_function` – Find function by name or address
@@ -73,6 +73,10 @@ The project uses a modular architecture:
 * `decompile` – Batch decompile functions (Hex-Rays)
 * `disasm` – Batch disassemble functions
 * `linear_disasm` – Linear disassembly from arbitrary address
+* `get_callers` – Structured caller summary grouped by function and call site
+* `get_callees` – Structured callee summary grouped by function and call site
+* `get_function_signature` – Best-available function signature string
+* `get_pseudocode_lines` – Structured pseudocode lines for a function
 * `xrefs_to` – Batch cross-references to addresses
 * `xrefs_from` – Batch cross-references from addresses
 * `xrefs_to_field` – Heuristic struct field references
@@ -82,7 +86,7 @@ The project uses a modular architecture:
 ### Memory Tools (`api_memory.py`)
 
 * `get_bytes` – Read raw bytes
-* `get_u8` / `get_u16` / `get_u32` / `get_u64` – Read integers
+* `read_scalar` – Read integers with explicit width
 * `get_string` – Read null-terminated strings
 
 ### Modeling Tools (`api_modeling.py`)
@@ -93,11 +97,12 @@ The project uses a modular architecture:
 * `undefine_items` – Undefine a byte range
 * `make_data` – Create typed data items
 * `make_string` – Create a string literal
-* `create_array` – Create an array of typed data items
 
 ### Type Tools (`api_types.py`)
 
-* `declare_type` – Create/update local types
+* `declare_struct` – Create/update local structs
+* `declare_enum` – Create/update local enums
+* `declare_typedef` – Create/update local typedefs
 * `set_function_prototype` – Set function signature
 * `set_local_variable_type` – Set local variable type (Hex-Rays)
 * `set_global_variable_type` – Set global variable type
@@ -120,7 +125,7 @@ The project uses a modular architecture:
 
 ### Python Tools (`api_python.py`) - Unsafe
 
-* `py_eval` – Execute Python code in IDA context and return `result` / `stdout` / `stderr`
+* `py_eval` – Execute arbitrary Python code in IDA context and return `result` / `stdout` / `stderr`
 
 ### Debug Tools (`api_debug.py`) - Unsafe
 
@@ -244,13 +249,13 @@ The bundled `mcp.json` and the current default config are centered on the HTTP p
 | Category | Tools |
 |----------|-------|
 | Management | `check_connection`, `list_instances`, `select_instance` |
-| Lifecycle | `open_in_ida`, `close_ida` |
-| Core | `list_functions`, `get_metadata`, `list_strings`, `list_globals`, `list_local_types`, `get_entry_points`, `get_function`, `list_imports`, `list_exports`, `list_segments`, `get_cursor` |
-| Analysis | `decompile`, `disasm`, `linear_disasm`, `xrefs_to`, `xrefs_from`, `xrefs_to_field`, `find_bytes`, `get_basic_blocks` |
-| Modeling | `create_function`, `delete_function`, `make_code`, `undefine_items`, `make_data`, `make_string`, `create_array` |
+| Lifecycle | `open_in_ida`, `close_ida`, `shutdown_gateway` |
+| Core | `list_functions`, `get_metadata`, `list_strings`, `list_globals`, `list_local_types`, `get_entry_points`, `convert_number`, `get_function`, `list_imports`, `list_exports`, `list_segments`, `get_cursor` |
+| Analysis | `decompile`, `disasm`, `linear_disasm`, `get_callers`, `get_callees`, `get_function_signature`, `get_pseudocode_lines`, `xrefs_to`, `xrefs_from`, `xrefs_to_field`, `find_bytes`, `get_basic_blocks` |
+| Modeling | `create_function`, `delete_function`, `make_code`, `undefine_items`, `make_data`, `make_string` |
 | Modify | `set_comment`, `rename_function`, `rename_global_variable`, `rename_local_variable`, `patch_bytes` |
-| Memory | `get_bytes`, `get_u8`, `get_u16`, `get_u32`, `get_u64`, `get_string` |
-| Types | `set_function_prototype`, `set_local_variable_type`, `set_global_variable_type`, `declare_type`, `list_structs`, `get_struct_info` |
+| Memory | `get_bytes`, `read_scalar`, `get_string` |
+| Types | `set_function_prototype`, `set_local_variable_type`, `set_global_variable_type`, `declare_struct`, `declare_enum`, `declare_typedef`, `list_structs`, `get_struct_info` |
 | Stack | `stack_frame`, `declare_stack`, `delete_stack` |
 | Python | `py_eval` |
 | Debug | `dbg_start`, `dbg_continue`, `dbg_step_into`, `dbg_step_over`, `dbg_regs`, `dbg_add_bp`, `dbg_delete_bp`, ... |

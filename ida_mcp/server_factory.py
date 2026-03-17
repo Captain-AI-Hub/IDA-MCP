@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-from .rpc import get_resources, get_tools, is_unsafe
+from .rpc import get_resources, get_tool_specs
 
 __version__ = "0.2.0"
 
@@ -41,18 +41,16 @@ def create_mcp_server(
         instructions="通过 MCP 工具访问 IDA 反汇编/分析数据。支持批量操作和 ida:// URI 资源访问。",
     )
 
-    for fn_name, fn in get_tools().items():
-        if is_unsafe(fn) and not enable_unsafe:
+    for spec in get_tool_specs().values():
+        if spec.unsafe and not enable_unsafe:
             continue
 
-        doc = fn.__doc__ or fn_name
-        description = doc.split("\n")[0].strip() if doc else fn_name
-        mcp.tool(description=description)(fn)
+        mcp.tool(description=spec.description)(spec.fn)
 
     for uri, fn in get_resources().items():
         try:
             mcp.resource(uri)(fn)
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"[IDA-MCP] Failed to register resource {uri}: {exc}")
 
     return mcp

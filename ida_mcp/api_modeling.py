@@ -7,13 +7,13 @@ Provides tools:
     - undefine_items    Undefine a range of items
     - make_data         Create typed data items
     - make_string       Create a string literal
-    - create_array      Create an array of typed data items
 """
 from __future__ import annotations
 
 from typing import Annotated, Optional, Union, Dict, Any, Tuple
 
 from .rpc import tool
+from .strings_cache import invalidate_strings_cache
 from .sync import idawrite, wait_for_auto_analysis
 from .utils import parse_address, hex_addr
 
@@ -52,6 +52,10 @@ def _error(message: str, **extra: Any) -> dict:
     result = {"error": message}
     result.update(extra)
     return result
+
+
+def _invalidate_strings_cache() -> None:
+    invalidate_strings_cache()
 
 
 def _resolve_address(value: Union[int, str], field: str) -> Tuple[Optional[int], Optional[dict]]:
@@ -471,6 +475,8 @@ def make_code(
     if not ok or after["kind"] != "code":
         return _error("failed to create code", address=hex_addr(ea), old_item=before, new_item=after)
 
+    _invalidate_strings_cache()
+
     return {
         "address": hex_addr(ea),
         "old_item": before,
@@ -509,6 +515,8 @@ def undefine_items(
 
     if not ok:
         return _error("failed to undefine items", address=hex_addr(ea), size=size, old_item=before, new_item=after)
+
+    _invalidate_strings_cache()
 
     return {
         "address": hex_addr(ea),
@@ -568,6 +576,8 @@ def make_data(
             new_item=after,
         )
 
+    _invalidate_strings_cache()
+
     return {
         "address": hex_addr(ea),
         "data_type": data_type,
@@ -622,6 +632,8 @@ def make_string(
     if not ok or after["kind"] != "string":
         return _error("failed to create string", address=hex_addr(ea), string_type=string_type, old_item=before, new_item=after)
 
+    _invalidate_strings_cache()
+
     return {
         "address": hex_addr(ea),
         "string_type": string_type,
@@ -630,16 +642,3 @@ def make_string(
         "new_item": after,
         "changed": True,
     }
-
-
-@tool
-@idawrite
-def create_array(
-    address: Annotated[Union[int, str], "Address to convert into an array"],
-    item_type: Annotated[str, "Array item type: byte, word, dword, qword, oword, float, double, pointer"],
-    count: Annotated[int, "Number of array elements"],
-) -> dict:
-    """Create an array of typed data items."""
-    if count <= 0:
-        return _error("count must be greater than zero", count=count)
-    return make_data.__wrapped__(address, item_type, count)
