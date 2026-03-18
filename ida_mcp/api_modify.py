@@ -92,7 +92,6 @@ def set_comment(
             "old": old,
             "new": new_text if new_text else None,
             "changed": old != (new_text if new_text else None) and ok,
-            "error": None,
         })
     
     return results
@@ -443,8 +442,9 @@ def patch_bytes(
             "patched": patched_count,
             "old_bytes": old_bytes,
             "new_bytes": new_bytes,
-            "error": errors[0] if errors else None,
         }
+        if errors:
+            result["error"] = errors[0]
         
         results.append(result)
         if patched_count > 0 and not cache_invalidated:

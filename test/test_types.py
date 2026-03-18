@@ -30,6 +30,14 @@ pytestmark = pytest.mark.types
 class TestDeclareTypes:
     """声明类型测试。"""
 
+    def test_build_temp_variable_decl_supports_array_fragments(self):
+        decl = api_types._build_temp_variable_decl("webs_post_rewrite_entry[18]", "__tmp")
+        assert decl == "webs_post_rewrite_entry __tmp[18];"
+
+    def test_build_temp_variable_decl_supports_plain_fragments(self):
+        decl = api_types._build_temp_variable_decl("int *", "__tmp")
+        assert decl == "int * __tmp;"
+
     def test_declare_named_decl_uses_python_parser_only(self, monkeypatch):
         """默认应优先走 IDAPython parse_decls 路径。"""
         calls = {"python": 0, "fallback": 0}

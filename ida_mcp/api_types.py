@@ -78,6 +78,42 @@ def _parse_decls_python(decls: str, hti_flags: int) -> tuple:
         return (-1, [str(e)])
 
 
+def _build_temp_variable_decl(type_text: str, temp_name: str) -> str:
+    """Convert a type fragment like `Foo[4]` into a parseable declaration."""
+    normalized = type_text.strip().rstrip(";").strip()
+    if not normalized:
+        return ""
+
+    match = re.match(r"^(?P<base>.+?)(?P<suffix>(?:\s*\[[^\]]*\])+)\s*$", normalized, re.DOTALL)
+    if match:
+        base = match.group("base").strip()
+        suffix = match.group("suffix")
+        return f"{base} {temp_name}{suffix};"
+
+    return f"{normalized} {temp_name};"
+
+
+def _parse_type_fragment_tinfo(type_text: str, temp_name: str) -> tuple[Any, list[str], str]:
+    candidate_decl = _build_temp_variable_decl(type_text, temp_name)
+    tinfo = ida_typeinf.tinfo_t()
+    errors: List[str] = []
+
+    variants = [
+        ("idaapi.parse_decl", lambda: idaapi.parse_decl(tinfo, idaapi.cvar.idati, candidate_decl, PT_SIL)),  # type: ignore
+        ("ida_typeinf.parse_decl", lambda: ida_typeinf.parse_decl(tinfo, idaapi.cvar.idati, candidate_decl, PT_SIL)),  # type: ignore
+    ]
+
+    for label, fn in variants:
+        try:
+            _ = fn()
+            if tinfo and not tinfo.empty():
+                return tinfo, errors, candidate_decl
+        except Exception as e:
+            errors.append(f"{label}: {e}")
+
+    return None, errors, candidate_decl
+
+
 # ============================================================================
 # 类型声明
 # ============================================================================
@@ -441,27 +477,9 @@ def set_local_variable_type(
         pass
     
     # 解析新类型
-    tinfo = ida_typeinf.tinfo_t()
-    parse_ok = False
-    errors: List[str] = []
-    candidate_decl = f"{type_text} tmp;"
-    
-    variants = [
-        ("idaapi.parse_decl", lambda: idaapi.parse_decl(tinfo, idaapi.cvar.idati, candidate_decl, PT_SIL)),  # type: ignore
-        ("ida_typeinf.parse_decl", lambda: ida_typeinf.parse_decl(tinfo, idaapi.cvar.idati, candidate_decl, PT_SIL)),  # type: ignore
-    ]
-    
-    for label, fn in variants:
-        try:
-            _ = fn()
-            if tinfo and not tinfo.empty():
-                parse_ok = True
-                break
-        except Exception as e:
-            errors.append(f"{label}: {e}")
-    
-    if not parse_ok:
-        return {"error": "parse type failed", "details": errors[:2]}
+    tinfo, errors, candidate_decl = _parse_type_fragment_tinfo(type_text, "__ida_mcp_lvar")
+    if not tinfo:
+        return {"error": "parse type failed", "details": errors[:2], "candidate_decl": candidate_decl}
     
     # 应用
     try:
@@ -548,27 +566,9 @@ def set_global_variable_type(
         pass
     
     # 解析新类型
-    candidate = f"{type_text} __tmp_var;"
-    tinfo = ida_typeinf.tinfo_t()
-    parse_ok = False
-    errors: List[str] = []
-    
-    variants = [
-        ("idaapi.parse_decl", lambda: idaapi.parse_decl(tinfo, idaapi.cvar.idati, candidate, PT_SIL)),  # type: ignore
-        ("ida_typeinf.parse_decl", lambda: ida_typeinf.parse_decl(tinfo, idaapi.cvar.idati, candidate, PT_SIL)),  # type: ignore
-    ]
-    
-    for label, fn in variants:
-        try:
-            _ = fn()
-            if tinfo and not tinfo.empty():
-                parse_ok = True
-                break
-        except Exception as e:
-            errors.append(f"{label}: {e}")
-    
-    if not parse_ok:
-        return {"error": "parse type failed", "details": errors[:2]}
+    tinfo, errors, candidate_decl = _parse_type_fragment_tinfo(type_text, "__ida_mcp_global")
+    if not tinfo:
+        return {"error": "parse type failed", "details": errors[:2], "candidate_decl": candidate_decl}
     
     # 应用
     try:

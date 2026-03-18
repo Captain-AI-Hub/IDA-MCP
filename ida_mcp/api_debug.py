@@ -575,7 +575,6 @@ def _set_breakpoint_single(query: str) -> dict:
         'ea': int(address),
         'existed': bool(existed and not added),
         'added': bool(added),
-        'error': None,
     }
     if notes:
         result['note'] = '; '.join(notes)[:300]
@@ -635,7 +634,6 @@ def _delete_breakpoint_single(query: str) -> dict:
         'ea': int(address),
         'existed': bool(existed),
         'deleted': bool(deleted),
-        'error': None,
     }
     if notes:
         result['note'] = '; '.join(notes)[:300]
@@ -866,7 +864,6 @@ def dbg_read_mem(
                 "size": len(byte_list),
                 "bytes": byte_list,
                 "hex": hex_str,
-                "error": None,
             })
         except Exception as e:
             results.append({"error": str(e), "address": hex_addr(address)})
@@ -912,7 +909,6 @@ def dbg_write_mem(
                 "address": hex_addr(address),
                 "size": len(byte_data),
                 "written": written,
-                "error": None,
             })
         except Exception as e:
             results.append({"error": str(e), "address": hex_addr(address)})

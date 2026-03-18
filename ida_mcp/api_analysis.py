@@ -7,7 +7,6 @@
     - get_callers         获取函数调用者摘要
     - get_callees         获取函数被调函数摘要
     - get_function_signature 获取函数签名
-    - get_pseudocode_lines 获取结构化伪代码行
     - xrefs_to            交叉引用 (到)
     - xrefs_from          交叉引用 (从)
     - xrefs_to_field      结构体字段引用
@@ -82,7 +81,6 @@ def _resolve_function(query: Union[int, str]) -> dict:
         "name": name,
         "start_ea": int(f.start_ea),
         "end_ea": int(f.end_ea),
-        "error": None,
     }
 
 
@@ -294,7 +292,6 @@ def _decompile_single(query: str) -> dict:
         "start_ea": hex_addr(info["start_ea"]),
         "end_ea": hex_addr(info["end_ea"]),
         "decompiled": text,
-        "error": None,
     }
 
 
@@ -395,10 +392,9 @@ def _disasm_single(query: str) -> dict:
     return {
         'query': query,
         'name': info["name"],
-        'start_ea': start,
-        'end_ea': end,
+        'start_ea': hex_addr(start),
+        'end_ea': hex_addr(end),
         'instructions': instructions,
-        'error': None,
     }
 
 
@@ -646,43 +642,6 @@ def get_function_signature(
     }
 
 
-@tool
-@idaread
-def get_pseudocode_lines(
-    addr: Annotated[Union[int, str], "Function address or name"],
-) -> dict:
-    """Get structured pseudocode lines for a function."""
-    wait_for_auto_analysis()
-    info = _resolve_function(addr)
-    if info.get("error"):
-        return info
-
-    text, error = _decompile_text(info)
-    if error:
-        return {"error": error, "query": addr}
-
-    raw_lines = text.splitlines() if text else []
-    while raw_lines and not raw_lines[-1].strip():
-        raw_lines.pop()
-
-    lines = [
-        {
-            "line": index + 1,
-            "text": line,
-        }
-        for index, line in enumerate(raw_lines)
-    ]
-
-    return {
-        "query": addr,
-        "function": info["name"],
-        "start_ea": hex_addr(info["start_ea"]),
-        "end_ea": hex_addr(info["end_ea"]),
-        "total": len(lines),
-        "lines": lines,
-    }
-
-
 # ============================================================================
 # 交叉引用
 # ============================================================================
@@ -730,7 +689,6 @@ def _xrefs_to_single(query: str) -> dict:
         "address": hex_addr(address),
         "total": len(xrefs),
         "xrefs": xrefs,
-        "error": None,
     }
 
 
@@ -777,7 +735,6 @@ def _xrefs_from_single(query: str) -> dict:
         "address": hex_addr(address),
         "total": len(xrefs),
         "xrefs": xrefs,
-        "error": None,
     }
 
 

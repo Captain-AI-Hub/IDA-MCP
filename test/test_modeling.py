@@ -225,22 +225,24 @@ class TestModelingIntegration:
         assert delete_result.get("changed") is True
 
         try:
-            missing = tool_caller("get_function", {"query": start_ea})
-            assert isinstance(missing, dict)
-            assert "error" in missing
+            missing = tool_caller("disasm", {"addr": start_ea})
+            assert isinstance(missing, list)
+            assert missing
+            assert "error" in missing[0]
 
             create_result = tool_caller("create_function", {"address": start_ea})
             assert isinstance(create_result, dict)
             assert "error" not in create_result
             assert create_result.get("function") is not None
 
-            recreated = tool_caller("get_function", {"query": start_ea})
-            assert isinstance(recreated, dict)
-            assert "error" not in recreated
-            assert recreated.get("start_ea", "").lower() == str(start_ea).lower()
+            recreated = tool_caller("disasm", {"addr": start_ea})
+            assert isinstance(recreated, list)
+            assert recreated
+            assert "error" not in recreated[0]
+            assert str(recreated[0].get("start_ea", "")).lower() == str(start_ea).lower()
         finally:
-            restored = tool_caller("get_function", {"query": start_ea})
-            if isinstance(restored, dict) and "error" in restored:
+            restored = tool_caller("disasm", {"addr": start_ea})
+            if isinstance(restored, list) and restored and "error" in restored[0]:
                 tool_caller("create_function", {"address": start_ea})
 
     def test_undefine_and_make_code_round_trip(self, tool_caller, first_function_address):

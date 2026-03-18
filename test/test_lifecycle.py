@@ -9,6 +9,7 @@ import os
 import time
 import subprocess
 import sys
+import tempfile
 import types
 from contextlib import asynccontextmanager
 from unittest.mock import patch
@@ -18,7 +19,6 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from ida_mcp.platform import wsl_to_win_path
 from ida_mcp import config
 from ida_mcp import registry
 from ida_mcp import registry_server
@@ -126,16 +126,19 @@ class TestLifecycleErrors:
 
     def test_open_in_ida_reserves_incrementing_ports(self):
         """连续启动未注册实例时，端口预留应继续向上分配。"""
+        launch_root = os.path.join(tempfile.gettempdir(), "ida-launch-root")
+        bundle_dir = os.path.join(launch_root, "ida_mcp_open_20260317-120000-000001")
         with patch.dict(lifecycle._RESERVED_LAUNCH_PORTS, {}, clear=True):
             with patch("ida_mcp.proxy.lifecycle.get_ida_path", return_value=sys.executable):
                 with patch("ida_mcp.proxy.lifecycle.get_ida_default_port", return_value=10000):
                     with patch("ida_mcp.proxy.lifecycle.get_instances", return_value=[]):
-                        with patch("ida_mcp.proxy.lifecycle.wsl_to_win_path", side_effect=lambda p: p):
-                            with patch("ida_mcp.proxy.lifecycle.normalize_subprocess_cwd", side_effect=lambda p: p):
-                                with patch("ida_mcp.proxy.lifecycle._is_port_bindable", return_value=True):
-                                    with patch("subprocess.Popen") as mock_popen:
-                                        first = lifecycle.open_in_ida(__file__)
-                                        second = lifecycle.open_in_ida(__file__)
+                        with patch("ida_mcp.proxy.lifecycle.get_open_in_ida_bundle_dir", return_value=launch_root):
+                            with patch("ida_mcp.proxy.lifecycle._is_port_bindable", return_value=True):
+                                with patch("ida_mcp.proxy.lifecycle._launch_bundle_dir", return_value=bundle_dir):
+                                    with patch("ida_mcp.proxy.lifecycle._stage_target_file_for_launch", return_value=(__file__, __file__)):
+                                        with patch("subprocess.Popen") as mock_popen:
+                                            first = lifecycle.open_in_ida(__file__)
+                                            second = lifecycle.open_in_ida(__file__)
 
         assert first["status"] == "ok"
         assert second["status"] == "ok"
@@ -143,25 +146,127 @@ class TestLifecycleErrors:
         assert second["requested_port"] == 10001
         assert mock_popen.call_args_list[0].kwargs["env"]["IDA_MCP_PORT"] == "10000"
         assert mock_popen.call_args_list[1].kwargs["env"]["IDA_MCP_PORT"] == "10001"
+        assert mock_popen.call_args_list[0].kwargs["env"]["IDA_MCP_AUTO_START"] == "1"
+        assert mock_popen.call_args_list[1].kwargs["env"]["IDA_MCP_AUTO_START"] == "1"
         assert "-A" not in mock_popen.call_args_list[0].args[0]
         assert "-A" not in mock_popen.call_args_list[1].args[0]
 
     def test_open_in_ida_preserves_explicit_extra_args(self):
         """仅在调用方显式要求时，才把批处理参数传给 IDA。"""
+        launch_root = os.path.join(tempfile.gettempdir(), "ida-launch-root")
+        bundle_dir = os.path.join(launch_root, "ida_mcp_open_20260317-120000-000001")
         with patch.dict(lifecycle._RESERVED_LAUNCH_PORTS, {}, clear=True):
             with patch("ida_mcp.proxy.lifecycle.get_ida_path", return_value=sys.executable):
                 with patch("ida_mcp.proxy.lifecycle.get_ida_default_port", return_value=10000):
                     with patch("ida_mcp.proxy.lifecycle.get_instances", return_value=[]):
-                        with patch("ida_mcp.proxy.lifecycle.wsl_to_win_path", side_effect=lambda p: p):
-                            with patch("ida_mcp.proxy.lifecycle.normalize_subprocess_cwd", side_effect=lambda p: p):
-                                with patch("ida_mcp.proxy.lifecycle._is_port_bindable", return_value=True):
-                                    with patch("subprocess.Popen") as mock_popen:
-                                        result = lifecycle.open_in_ida(__file__, extra_args=["-A", "-Llog.txt"])
+                        with patch("ida_mcp.proxy.lifecycle.get_open_in_ida_bundle_dir", return_value=launch_root):
+                            with patch("ida_mcp.proxy.lifecycle._is_port_bindable", return_value=True):
+                                with patch("ida_mcp.proxy.lifecycle._launch_bundle_dir", return_value=bundle_dir):
+                                    with patch("ida_mcp.proxy.lifecycle._stage_target_file_for_launch", return_value=(__file__, __file__)):
+                                        with patch("subprocess.Popen") as mock_popen:
+                                            result = lifecycle.open_in_ida(__file__, extra_args=["-A", "-Llog.txt"])
 
         assert result["status"] == "ok"
         cmd = mock_popen.call_args.args[0]
         assert "-A" in cmd
         assert "-Llog.txt" in cmd
+        assert mock_popen.call_args.kwargs["env"]["IDA_MCP_AUTO_START"] == "1"
+
+    def test_resolve_launch_inputs_prefers_existing_database(self, tmp_path):
+        sample = tmp_path / "sample.exe"
+        database = tmp_path / "sample.exe.i64"
+        sample.write_bytes(b"test")
+        database.write_bytes(b"idb")
+
+        launch_target, input_file_path, database_path = lifecycle._resolve_launch_inputs(str(sample))
+
+        assert launch_target == str(database.resolve())
+        assert input_file_path == str(sample.resolve())
+        assert database_path == str(database.resolve())
+
+    def test_get_open_in_ida_bundle_dir_prefers_env_over_config(self):
+        with patch.dict(os.environ, {"IDA_MCP_BUNDLE_DIR": r"D:\env-temp"}, clear=False):
+            with patch("ida_mcp.config.load_config", return_value={"open_in_ida_bundle_dir": r"E:\config-temp"}):
+                assert config.get_open_in_ida_bundle_dir() == r"D:\env-temp"
+
+    def test_launch_bundle_dir_uses_timestamp_directory(self, tmp_path):
+        root_dir = str(tmp_path)
+        with patch("ida_mcp.proxy.lifecycle._timestamp_dir_name", return_value="ida_mcp_open_20260317-120000-000001"):
+            with patch("ida_mcp.proxy.lifecycle.os.makedirs") as mock_makedirs:
+                path = lifecycle._launch_bundle_dir(root_dir=root_dir)
+
+        expected_root = root_dir
+        expected_bundle = os.path.join(root_dir, "ida_mcp_open_20260317-120000-000001")
+        assert path == expected_bundle
+        assert mock_makedirs.call_args_list[0].args[0] == expected_root
+        assert mock_makedirs.call_args_list[1].args[0] == expected_bundle
+
+    def test_open_in_ida_stages_target_in_configured_root(self):
+        bundle_root = r"D:\ida-mcp"
+        bundle_dir = os.path.join(bundle_root, "ida_mcp_open_20260317-120000-000001")
+        staged_file = os.path.join(bundle_dir, os.path.basename(__file__))
+        with patch.dict(lifecycle._RESERVED_LAUNCH_PORTS, {}, clear=True):
+            with patch("ida_mcp.proxy.lifecycle.get_ida_path", return_value=sys.executable):
+                with patch("ida_mcp.proxy.lifecycle.get_ida_default_port", return_value=10000):
+                    with patch("ida_mcp.proxy.lifecycle.get_instances", return_value=[]):
+                        with patch("ida_mcp.proxy.lifecycle.get_open_in_ida_bundle_dir", return_value=bundle_root):
+                            with patch("ida_mcp.proxy.lifecycle._is_port_bindable", return_value=True):
+                                with patch("ida_mcp.proxy.lifecycle._launch_bundle_dir", return_value=bundle_dir) as mock_launch_bundle:
+                                    with patch("ida_mcp.proxy.lifecycle._stage_target_file_for_launch", return_value=(staged_file, staged_file)) as mock_stage:
+                                        with patch("subprocess.Popen") as mock_popen:
+                                            result = lifecycle.open_in_ida(__file__)
+
+        mock_launch_bundle.assert_called_once_with(bundle_root)
+        mock_stage.assert_called_once_with(__file__, bundle_dir)
+        assert result["launch_bundle"] == bundle_dir
+        assert result["staged_file"] == staged_file
+        assert result["launch_target"] == staged_file
+        assert staged_file in mock_popen.call_args.args[0]
+
+    def test_open_in_ida_uses_direct_target_path_when_bundle_dir_unset(self):
+        direct_target = os.path.abspath(__file__)
+        with patch.dict(lifecycle._RESERVED_LAUNCH_PORTS, {}, clear=True):
+            with patch("ida_mcp.proxy.lifecycle.get_ida_path", return_value=sys.executable):
+                with patch("ida_mcp.proxy.lifecycle.get_ida_default_port", return_value=10000):
+                    with patch("ida_mcp.proxy.lifecycle.get_instances", return_value=[]):
+                        with patch("ida_mcp.proxy.lifecycle.get_open_in_ida_bundle_dir", return_value=None):
+                            with patch("ida_mcp.proxy.lifecycle._is_port_bindable", return_value=True):
+                                with patch("ida_mcp.proxy.lifecycle._use_direct_target_file", return_value=(direct_target, None)) as mock_direct:
+                                    with patch("subprocess.Popen") as mock_popen:
+                                        result = lifecycle.open_in_ida(__file__)
+
+        mock_direct.assert_called_once_with(__file__)
+        assert result["launch_bundle"] is None
+        assert result["staged_file"] is None
+        assert result["launch_target"] == direct_target
+        assert direct_target in mock_popen.call_args.args[0]
+
+    def test_stage_target_file_for_launch_preserves_basename_when_staging(self, tmp_path):
+        copied = []
+        bundle_dir = str(tmp_path / "launch-bundle")
+        expected_local = os.path.join(bundle_dir, "same.bin")
+
+        with patch("ida_mcp.proxy.lifecycle.shutil.copy2", side_effect=lambda src, dst: copied.append((src, dst))):
+            staged_path, staged_local = lifecycle._stage_target_file_for_launch("/home/user/same.bin", bundle_dir)
+
+        assert staged_path == expected_local
+        assert staged_local == expected_local
+        assert copied == [("/home/user/same.bin", expected_local)]
+
+    def test_stage_target_file_for_launch_prefers_database_when_present(self, tmp_path):
+        bundle_dir = tmp_path / "launch-bundle"
+        bundle_dir.mkdir()
+        sample = tmp_path / "sample.exe"
+        database = tmp_path / "sample.exe.i64"
+        sample.write_bytes(b"test")
+        database.write_bytes(b"idb")
+
+        launch_path, staged_requested = lifecycle._stage_target_file_for_launch(str(sample), str(bundle_dir))
+
+        assert launch_path == str((bundle_dir / database.name).resolve())
+        assert staged_requested == str((bundle_dir / sample.name).resolve())
+        assert (bundle_dir / sample.name).exists()
+        assert (bundle_dir / database.name).exists()
 
     def test_open_in_ida_releases_reserved_port_when_launch_fails(self):
         """启动失败后，应释放预留端口以便后续重试。"""
@@ -169,31 +274,14 @@ class TestLifecycleErrors:
             with patch("ida_mcp.proxy.lifecycle.get_ida_path", return_value=sys.executable):
                 with patch("ida_mcp.proxy.lifecycle.get_ida_default_port", return_value=10000):
                     with patch("ida_mcp.proxy.lifecycle.get_instances", return_value=[]):
-                        with patch("ida_mcp.proxy.lifecycle.wsl_to_win_path", side_effect=lambda p: p):
-                            with patch("ida_mcp.proxy.lifecycle.normalize_subprocess_cwd", side_effect=lambda p: p):
-                                with patch("ida_mcp.proxy.lifecycle._is_port_bindable", return_value=True):
+                        with patch("ida_mcp.proxy.lifecycle.get_open_in_ida_bundle_dir", return_value=None):
+                            with patch("ida_mcp.proxy.lifecycle._is_port_bindable", return_value=True):
+                                with patch("ida_mcp.proxy.lifecycle._use_direct_target_file", return_value=(__file__, None)):
                                     with patch("subprocess.Popen", side_effect=RuntimeError("boom")):
                                         result = lifecycle.open_in_ida(__file__)
             assert lifecycle._RESERVED_LAUNCH_PORTS == {}
 
         assert "error" in result
-
-
-    def test_wsl_path_conversion(self):
-        """测试 WSL 路径转换逻辑 (单元测试)。"""
-
-        with patch("ida_mcp.platform.is_wsl", return_value=True):
-            with patch("subprocess.check_output") as mock_sub:
-                mock_sub.return_value = b"C:\\test\n"
-
-                result = wsl_to_win_path("/mnt/c/test")
-                assert result == "C:\\test"
-                mock_sub.assert_called_with(["wslpath", "-w", "/mnt/c/test"], stderr=subprocess.DEVNULL)
-
-    def test_wsl_path_conversion_non_wsl(self):
-        """测试非 WSL 环境下的路径转换 (单元测试)。"""
-        with patch("ida_mcp.platform.is_wsl", return_value=False):
-            assert wsl_to_win_path("/home/user/test") == "/home/user/test"
 
 
 class TestLifecycleClose:

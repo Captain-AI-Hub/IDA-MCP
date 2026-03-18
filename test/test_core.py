@@ -102,42 +102,6 @@ class TestFunctions:
         assert "error" in result
 
 
-class TestGetFunction:
-    """函数查找测试。"""
-    
-    def test_get_function_by_name(self, tool_caller, first_function_name):
-        """测试按名称查找。"""
-        result = tool_caller("get_function", {"query": first_function_name})
-        assert "error" not in result
-        assert result.get("name") == first_function_name
-    
-    def test_get_function_by_address(self, tool_caller, first_function_address):
-        """测试按地址查找。"""
-        result = tool_caller("get_function", {"query": hex(first_function_address)})
-        assert "error" not in result
-        # start_ea 返回为 hex 字符串（大写），比较时忽略大小写
-        assert result.get("start_ea", "").lower() == hex(first_function_address).lower()
-    
-    def test_get_function_by_address_inside(self, tool_caller, first_function):
-        """测试按函数内部地址查找。"""
-        # 使用函数内的地址（起始地址+4），start_ea 是 hex 字符串
-        addr = int(first_function["start_ea"], 16) + 4
-        result = tool_caller("get_function", {"query": hex(addr)})
-        # 应该能找到同一个函数
-        if "error" not in result:
-            assert result.get("start_ea") == first_function["start_ea"]
-    
-    def test_get_function_not_found(self, tool_caller):
-        """测试查找不存在的函数。"""
-        result = tool_caller("get_function", {"query": "nonexistent_function_xyz123456"})
-        assert "error" in result
-    
-    def test_get_function_empty_query(self, tool_caller):
-        """测试空查询。"""
-        result = tool_caller("get_function", {"query": ""})
-        assert "error" in result
-
-
 class TestGlobals:
     """全局变量测试。"""
     

@@ -57,7 +57,6 @@ The project uses a modular architecture:
 * `list_instances` – List all IDA instances registered in the shared gateway
 * `get_metadata` – IDB metadata (hash/arch/bits/endian)
 * `list_functions` – Paginated function list with optional pattern filter
-* `get_function` – Find function by name or address
 * `list_globals` – Global symbols (non-functions)
 * `list_strings` – Extracted strings
 * `list_local_types` – Local type definitions
@@ -76,7 +75,6 @@ The project uses a modular architecture:
 * `get_callers` – Structured caller summary grouped by function and call site
 * `get_callees` – Structured callee summary grouped by function and call site
 * `get_function_signature` – Best-available function signature string
-* `get_pseudocode_lines` – Structured pseudocode lines for a function
 * `xrefs_to` – Batch cross-references to addresses
 * `xrefs_from` – Batch cross-references from addresses
 * `xrefs_to_field` – Heuristic struct field references
@@ -220,9 +218,28 @@ IDA-MCP/
 
 Closing an IDA instance only deregisters that instance. The standalone gateway keeps running and can accept later instances.
 
-`open_in_ida` is a proxy-side lifecycle tool. It launches the IDA binary resolved from `IDA_PATH` or `config.conf` (`ida_path`) and sets `IDA_MCP_AUTO_START=1` so the plugin comes up automatically. It keeps IDA in normal interactive GUI mode by default; if you want batch/autonomous startup, pass `-A` explicitly in `extra_args`.
+`open_in_ida` is a proxy-side lifecycle tool. It launches the IDA binary resolved from `IDA_PATH` or `config.conf` (`ida_path`) in normal interactive GUI mode, and requests plugin auto-start by setting `IDA_MCP_AUTO_START=1` and a reserved `IDA_MCP_PORT` in the child process environment.
 
-IDA-MCP is WSL-compatible. In a WSL environment, `open_in_ida` can launch a Windows IDA installation from Linux-side tooling, and it automatically converts the target file path into a Windows path before spawning IDA.
+`open_in_ida` uses `IDA_PATH` / `config.conf` to resolve the IDA executable. File staging is optional: when `IDA_MCP_BUNDLE_DIR` or `open_in_ida_bundle_dir` is configured, `open_in_ida` creates a timestamped launch directory under that root and copies the requested file there before launch. If a matching `.i64` or `.idb` already exists, it copies that database too and launches the database path directly so IDA can enter the existing workspace without showing the loader/options confirmation dialog again. When staging is not configured, `open_in_ida` launches the original path directly and still prefers an existing matching database when present.
+
+If you use WSL as the control side, these are README-only operational recommendations. IDA-MCP does not read them. Recommended Windows-side `%UserProfile%\\.wslconfig`:
+
+```ini
+[wsl2]
+memory=24GB
+processors=16
+swap=6GB
+
+nestedVirtualization=true
+ipv6=true
+
+[experimental]
+autoMemoryReclaim=gradual
+networkingMode=mirrored
+dnsTunneling=true
+firewall=true
+autoProxy=true
+```
 
 ## Transport Overview
 
@@ -250,8 +267,8 @@ The bundled `mcp.json` and the current default config are centered on the HTTP p
 |----------|-------|
 | Management | `check_connection`, `list_instances`, `select_instance` |
 | Lifecycle | `open_in_ida`, `close_ida`, `shutdown_gateway` |
-| Core | `list_functions`, `get_metadata`, `list_strings`, `list_globals`, `list_local_types`, `get_entry_points`, `convert_number`, `get_function`, `list_imports`, `list_exports`, `list_segments`, `get_cursor` |
-| Analysis | `decompile`, `disasm`, `linear_disasm`, `get_callers`, `get_callees`, `get_function_signature`, `get_pseudocode_lines`, `xrefs_to`, `xrefs_from`, `xrefs_to_field`, `find_bytes`, `get_basic_blocks` |
+| Core | `list_functions`, `get_metadata`, `list_strings`, `list_globals`, `list_local_types`, `get_entry_points`, `convert_number`, `list_imports`, `list_exports`, `list_segments`, `get_cursor` |
+| Analysis | `decompile`, `disasm`, `linear_disasm`, `get_callers`, `get_callees`, `get_function_signature`, `xrefs_to`, `xrefs_from`, `xrefs_to_field`, `find_bytes`, `get_basic_blocks` |
 | Modeling | `create_function`, `delete_function`, `make_code`, `undefine_items`, `make_data`, `make_string` |
 | Modify | `set_comment`, `rename_function`, `rename_global_variable`, `rename_local_variable`, `patch_bytes` |
 | Memory | `get_bytes`, `read_scalar`, `get_string` |
@@ -283,6 +300,7 @@ enable_unsafe = true
 # IDA instance settings
 # ida_default_port = 10000
 # ida_path = "C:\\Path\\To\\ida.exe"
+# open_in_ida_bundle_dir = "D:\\Temp\\ida-mcp"
 
 # General settings
 # request_timeout = 30
@@ -293,9 +311,14 @@ Notes:
 
 * The gateway host and direct instance host are fixed to `127.0.0.1` for client connections in code.
 * `IDA_PATH` overrides `ida_path` from `config.conf`.
+* `IDA_MCP_BUNDLE_DIR` overrides `open_in_ida_bundle_dir` from `config.conf`.
 * `IDA_MCP_ENABLE_UNSAFE=1|0` overrides `enable_unsafe` from `config.conf`.
 * `open_in_ida` no longer accepts an `ida_path` tool argument; configure the IDA executable through `IDA_PATH` or `config.conf`.
-* WSL is supported: you can run the tooling inside WSL and still launch a Windows IDA binary through `open_in_ida`.
+* `open_in_ida` sets `IDA_MCP_AUTO_START=1` and `IDA_MCP_PORT=<reserved_port>` for the launched IDA process.
+* `open_in_ida` only stages files when `IDA_MCP_BUNDLE_DIR` or `open_in_ida_bundle_dir` is configured.
+* When staging is enabled, `open_in_ida` creates `.../<timestamp>/`, copies the requested file, and also copies a matching `.i64`/`.idb` when one exists.
+* When a matching `.i64`/`.idb` exists, `open_in_ida` launches that database path directly to avoid the initial loader/options confirmation flow.
+* When staging is not enabled, `open_in_ida` launches the original path directly.
 * If both `enable_stdio` and `enable_http` are disabled, the plugin will not start the gateway/transport stack.
 
 ### Method 1: HTTP Proxy Mode (Recommended)

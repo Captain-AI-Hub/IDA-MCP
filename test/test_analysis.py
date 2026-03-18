@@ -12,7 +12,6 @@ API 参数对应：
 - get_callers: addr
 - get_callees: addr
 - get_function_signature: addr
-- get_pseudocode_lines: addr
 - xrefs_to: addr (逗号分隔的地址字符串)
 - find_bytes: pattern, start, end, limit
 - get_basic_blocks: addr
@@ -194,24 +193,11 @@ class TestStructuredAnalysis:
             assert isinstance(result["signature"], str)
             assert result.get("source") in {"typeinfo", "pseudocode", "fallback_name"}
 
-    def test_get_pseudocode_lines(self, tool_caller, first_function_address):
-        result = tool_caller("get_pseudocode_lines", {"addr": hex(first_function_address)})
-        assert isinstance(result, dict)
-        if "error" not in result:
-            assert "lines" in result
-            assert "total" in result
-            assert isinstance(result["lines"], list)
-            if result["lines"]:
-                line = result["lines"][0]
-                assert "line" in line
-                assert "text" in line
-
     def test_structured_analysis_not_found(self, tool_caller):
         for tool_name in [
             "get_callers",
             "get_callees",
             "get_function_signature",
-            "get_pseudocode_lines",
         ]:
             result = tool_caller(tool_name, {"addr": "__nonexistent_func__"})
             assert isinstance(result, dict)

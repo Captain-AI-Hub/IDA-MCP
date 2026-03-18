@@ -16,6 +16,8 @@ HTTP 代理配置:
 
 IDA 实例配置 (内部组件，地址固定为 127.0.0.1):
     - ida_default_port: IDA 实例 MCP 端口起始值 (默认 10000)
+    - ida_path: IDA 可执行文件路径
+    - open_in_ida_bundle_dir: open_in_ida staging 目录 (可选)
 
 通用配置:
     - request_timeout: 请求超时时间 (默认 30 秒)
@@ -25,8 +27,6 @@ from __future__ import annotations
 
 import os
 from typing import Any, Dict
-
-from .platform import win_to_wsl_path
 
 # 配置文件路径
 _CONFIG_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -50,6 +50,7 @@ _DEFAULT_CONFIG = {
     # IDA 实例配置（地址固定为 127.0.0.1，仅端口可配置）
     "ida_default_port": 10000,
     "ida_path": None, # IDA 可执行文件路径
+    "open_in_ida_bundle_dir": None, # open_in_ida staging 目录
     
     # 通用配置
     "request_timeout": 30,
@@ -229,8 +230,6 @@ def get_ida_path() -> str | None:
     1. 环境变量 IDA_PATH
     2. 配置文件中的 ida_path
     3. None
-    
-    如果在 WSL 环境中，会自动将 Windows 路径转换为 WSL 路径。
     """
     path = None
     env_path = os.getenv("IDA_PATH")
@@ -240,8 +239,31 @@ def get_ida_path() -> str | None:
         config = load_config()
         path = config.get("ida_path")
         
-    if path:
-        return win_to_wsl_path(path)
+    if isinstance(path, str):
+        path = path.strip()
+        if path:
+            return path
+    return None
+
+
+def get_open_in_ida_bundle_dir() -> str | None:
+    """获取 open_in_ida 使用的 staging 目录。
+
+    优先级:
+    1. 环境变量 IDA_MCP_BUNDLE_DIR
+    2. 配置文件中的 open_in_ida_bundle_dir
+    3. None
+    """
+    env_path = os.getenv("IDA_MCP_BUNDLE_DIR")
+    if env_path and env_path.strip():
+        return env_path.strip()
+
+    config = load_config()
+    configured_path = config.get("open_in_ida_bundle_dir")
+    if isinstance(configured_path, str):
+        configured_path = configured_path.strip()
+        if configured_path:
+            return configured_path
     return None
 
 

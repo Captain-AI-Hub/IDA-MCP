@@ -64,7 +64,6 @@ def test_proxy_registers_structured_analysis_tools(monkeypatch):
         "get_callers",
         "get_callees",
         "get_function_signature",
-        "get_pseudocode_lines",
     ):
         assert tool_name in server.tool_names
 
@@ -90,6 +89,9 @@ def test_proxy_registers_consolidated_memory_and_type_tools(monkeypatch):
         "get_u64",
         "create_array",
         "declare_type",
+        "get_function",
+        "get_pseudocode_function",
+        "get_pseudocode_lines",
     ):
         assert removed_name not in server.tool_names
 

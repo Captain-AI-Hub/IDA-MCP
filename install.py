@@ -363,6 +363,7 @@ def render_config(config: dict[str, object]) -> str:
             "# IDA instance settings",
             f"ida_default_port = {quote_config_value(config['ida_default_port'])}",
             f"ida_path = {quote_config_value(config['ida_path'])}",
+            f"open_in_ida_bundle_dir = {quote_config_value(config['open_in_ida_bundle_dir'])}",
             "",
             "# General settings",
             f"request_timeout = {quote_config_value(config['request_timeout'])}",
@@ -382,6 +383,7 @@ def build_config_interactively(defaults: dict[str, object], ida_executable: Path
         "http_path": str(defaults.get("http_path", "/mcp")),
         "ida_default_port": int(defaults.get("ida_default_port", 10000)),
         "ida_path": str(ida_executable),
+        "open_in_ida_bundle_dir": str(defaults.get("open_in_ida_bundle_dir") or ""),
         "request_timeout": int(defaults.get("request_timeout", 30)),
         "debug": bool(defaults.get("debug", False)),
     }
@@ -400,6 +402,10 @@ def build_config_interactively(defaults: dict[str, object], ida_executable: Path
     config["ida_path"] = prompt_existing_file(
         "IDA executable path for open_in_ida",
         str(config["ida_path"]),
+    )
+    config["open_in_ida_bundle_dir"] = prompt(
+        "open_in_ida bundle dir (optional; leave empty to open the original path directly)",
+        str(config["open_in_ida_bundle_dir"]),
     )
     config["request_timeout"] = prompt_int("Request timeout (seconds)", int(config["request_timeout"]))
     config["debug"] = prompt_bool("Enable debug logging", bool(config["debug"]))
@@ -427,6 +433,7 @@ def print_summary(
     print(f"  enable_unsafe  : {config['enable_unsafe']}")
     print(f"  gateway bind   : {config['http_host']}:{config['http_port']}{config['http_path']}")
     print(f"  ida_default_port: {config['ida_default_port']}")
+    print(f"  open_in_ida bundle dir: {config['open_in_ida_bundle_dir'] or '(direct source path)'}")
     print(f"  request_timeout: {config['request_timeout']}")
     print(f"  debug          : {config['debug']}")
 

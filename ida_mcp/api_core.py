@@ -5,7 +5,6 @@
     - list_instances       列出网关中所有已注册实例
     - get_metadata         获取 IDB 元数据
     - list_functions       列出函数
-    - get_function         查找函数
     - list_globals         列出全局变量
     - list_strings         列出字符串
     - list_local_types     列出本地类型
@@ -20,11 +19,11 @@ from __future__ import annotations
 
 import os
 import hashlib
-from typing import Annotated, Optional, List, Union
+from typing import Annotated, Optional, List
 
 from .rpc import tool
-from .sync import idaread, idawrite, wait_for_auto_analysis
-from .utils import parse_address, paginate, pattern_filter, normalize_arch, hex_addr
+from .sync import idaread
+from .utils import paginate, pattern_filter, normalize_arch, hex_addr
 from .strings_cache import (
     get_strings_cache as _shared_get_strings_cache,
     init_strings_cache as _shared_init_strings_cache,
@@ -243,55 +242,6 @@ def list_functions(
         functions = pattern_filter(functions, 'name', pattern)
     
     return paginate(functions, offset, count)  # type: ignore
-
-
-# ============================================================================
-# 函数查找
-# ============================================================================
-
-@tool
-@idaread
-def get_function(
-    query: Annotated[Union[int, str], "Function name or address (0x...)"],
-) -> dict:
-    """Get function by name or address. Auto-detects input type."""
-    if not query:
-        return {"error": "empty query"}
-    
-    # 尝试作为地址解析
-    result = parse_address(query)
-    if result["ok"] and result["value"] is not None:
-        ea = result["value"]
-        try:
-            f = ida_funcs.get_func(ea)
-            if f:
-                name = idaapi.get_func_name(f.start_ea)
-                return {
-                    "name": name,
-                    "start_ea": hex_addr(f.start_ea),
-                    "end_ea": hex_addr(f.end_ea),
-                    "query": query,
-                }
-        except Exception:
-            pass
-    
-    # 作为名称查找
-    for ea in idautils.Functions():
-        try:
-            fn_name = idaapi.get_func_name(ea)
-        except Exception:
-            continue
-        if fn_name == query:
-            f = ida_funcs.get_func(ea)
-            if f:
-                return {
-                    "name": fn_name,
-                    "start_ea": hex_addr(f.start_ea),
-                    "end_ea": hex_addr(f.end_ea),
-                    "query": query,
-                }
-    
-    return {"error": "not found", "query": query}
 
 
 # ============================================================================

@@ -325,7 +325,6 @@ def _stack_frame_single(query: str) -> dict:
             "start_ea": hex_addr(f.start_ea),
             "variables": [],
             "note": "no stack frame or local variables",
-            "error": None,
         }
     
     # 返回结构：优先使用 local_variables（更完整），frame_variables 作为补充
@@ -333,7 +332,6 @@ def _stack_frame_single(query: str) -> dict:
         "query": query,
         "name": fname,
         "start_ea": hex_addr(f.start_ea),
-        "error": None,
     }
     
     # 主要返回 Hex-Rays 局部变量（如果有）
@@ -433,15 +431,17 @@ def declare_stack(
             continue
 
         ok, error = _define_stack_member(f, offset, name, tif)
-        results.append({
+        result = {
             "function_address": hex_addr(int(f.start_ea)),
             "offset": offset,
             "name": name,
             "declared_type": declared_type,
             "size": size,
             "changed": bool(ok),
-            "error": error,
-        })
+        }
+        if error is not None:
+            result["error"] = error
+        results.append(result)
     
     return results
 
@@ -495,7 +495,6 @@ def delete_stack(
                     "name": name,
                     "changed": bool(ok),
                     "deleted": bool(ok),
-                    "error": None,
                 })
             else:
                 results.append({

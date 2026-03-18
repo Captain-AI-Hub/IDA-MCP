@@ -48,7 +48,7 @@ server = FastMCP(
 - list_functions, get_metadata, list_strings, list_globals, list_local_types, get_entry_points, convert_number
 
 分析工具:
-- decompile, disasm, linear_disasm, xrefs_to, xrefs_from, get_function
+- decompile, disasm, linear_disasm, xrefs_to, xrefs_from
 
 修改工具:
 - set_comment, rename_function, rename_global_variable, rename_local_variable
