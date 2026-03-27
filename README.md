@@ -346,7 +346,7 @@ Notes:
 
 When the standalone gateway is running and HTTP proxying is enabled, the client only needs the proxy URL.
 
-**Claude / Cherry Studio / Cursor example:**
+**Claude / Cherry Studio / Cursor / Cline example:**
 
 ```json
 {
@@ -378,6 +378,21 @@ When the standalone gateway is running and HTTP proxying is enabled, the client 
   "servers": {
     "ida-mcp": {
       "url": "http://127.0.0.1:11338/mcp"
+    }
+  }
+}
+```
+
+**Cline example:**
+
+```json
+{
+  "servers": {
+    "ida-mcp": {
+      "url": "http://127.0.0.1:11338/mcp",
+      "type": "streamableHttp",
+      "disabled": false,
+      "autoApprove": []
     }
   }
 }
