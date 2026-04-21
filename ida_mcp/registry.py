@@ -558,29 +558,9 @@ def deregister() -> bool:  # pragma: no cover
     return isinstance(result, dict) and result.get("status") == "ok"
 
 
-def call_tool(
-    pid: int | None = None,
-    port: int | None = None,
-    tool: str = "",
-    params: dict | None = None,
-) -> dict:
-    """Forward a tool invocation through the gateway."""
-    result = _request_json(
-        "POST",
-        "/call",
-        {"pid": pid, "port": port, "tool": tool, "params": params or {}},
-    )
-    return result if isinstance(result, dict) else {"error": "Gateway unavailable"}
-
-
 def check_connection() -> dict:
     instances = get_instances()
     return {"ok": _gateway_ready(), "count": len(instances)}
-
-
-def set_debug(enable: bool) -> dict:
-    result = _request_json("POST", "/debug", {"enabled": bool(enable)})
-    return result if isinstance(result, dict) else {"error": "Gateway unavailable"}
 
 
 def shutdown_gateway(force: bool = False, timeout: Optional[float] = None) -> dict:
@@ -620,8 +600,3 @@ def get_registry_server_status() -> dict:
     status = dict(_launch_status.get("registry_server", {}))
     status["alive"] = _gateway_ready()
     return status
-
-
-def is_coordinator() -> bool:
-    """Compatibility shim: gateway is now always external to IDA."""
-    return False

@@ -12,8 +12,7 @@ except ImportError:  # pragma: no cover
     Field = lambda **kwargs: None  # type: ignore
 
 from ..config import is_unsafe_enabled
-from ..rpc import ToolSpec, get_tool_specs
-from ..server_factory import _ensure_api_modules_loaded
+from ..rpc import ToolSpec, get_tool_specs, ensure_api_modules_loaded
 from ._state import forward
 from . import lifecycle
 
@@ -65,7 +64,7 @@ def _build_forward_wrapper(spec: ToolSpec) -> Any:
 
 
 def _register_forwarded_backend_tools(server: Any, unsafe_enabled: bool) -> None:
-    _ensure_api_modules_loaded()
+    ensure_api_modules_loaded()
 
     for spec in sorted(get_tool_specs().values(), key=lambda item: item.name):
         if spec.name in _PROXY_MANAGED_TOOL_NAMES:

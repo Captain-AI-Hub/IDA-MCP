@@ -1,7 +1,7 @@
 """共享的 FastMCP Server 实例。
 
 此模块创建一个 FastMCP server 并注册所有工具。
-ida_mcp_proxy.py 和 http_server.py 都应该导入此模块的 server。
+ida_mcp_proxy.py 和 registry_server.py 都应该导入此模块的 server。
 
 这确保 stdio 和 HTTP 两种传输方式使用完全相同的 server 实例。
 """

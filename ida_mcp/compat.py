@@ -190,6 +190,9 @@ def get_member_tinfo(tif: Any, m: Any) -> bool:
     if HAS_IDA_STRUCT:
         return _ida_struct.get_member_tinfo(tif, m)  # type: ignore
     # IDA 9.x: 使用 ida_typeinf
+    # NOTE: get_numbered_type(m.sid) 将 sid (struct id) 作为 numbered type
+    # ordinal 使用，这在 IDA 9.x 中可能需要改用 get_named_type 或
+    # get_type_by_tid。如果 IDA 9.x 的栈帧类型获取出现问题，请检查此处。
     if isinstance(m, _MemberCompat):
         try:
             # IDA 9.x 中结构体成员类型需要通过 ida_typeinf 获取

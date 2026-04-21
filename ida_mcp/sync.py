@@ -33,19 +33,20 @@ def _run_in_ida(fn: Callable[[], Any], write: bool = False) -> Any:
         raise RuntimeError("ida_kernwin not available (not running in IDA?)")
         
     result_box: dict[str, Any] = {}
+    exc_box: dict[str, Exception] = {}
     
     def wrapper() -> int:
         try:
             result_box["value"] = fn()
         except Exception as e:
-            result_box["error"] = repr(e)
+            exc_box["error"] = e
         return 0
     
     flag = ida_kernwin.MFF_WRITE if write else ida_kernwin.MFF_READ
     ida_kernwin.execute_sync(wrapper, flag)
     
-    if "error" in result_box:
-        raise RuntimeError(result_box["error"])
+    if "error" in exc_box:
+        raise RuntimeError(str(exc_box["error"])) from exc_box["error"]
     return result_box.get("value")
 
 

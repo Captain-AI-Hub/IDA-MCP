@@ -11,8 +11,7 @@ proxy/
 ├── register_tools.py     # 集中注册所有转发工具
 ├── ida_mcp_proxy.py      # stdio 传输入口 (本文件)
 ├── _http.py              # HTTP 辅助函数
-├── _state.py             # 状态管理和实例选择
-└── http_server.py        # HTTP 传输入口
+└── _state.py             # 状态管理和实例选择
 
 使用方式
 ====================

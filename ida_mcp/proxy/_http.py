@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import urllib.request
 from typing import Any
 
 from ..config import get_gateway_internal_url, get_request_timeout
 from ..registry import ensure_registry_server
+
+_log = logging.getLogger(__name__)
 
 
 def http_get(path: str) -> Any:
@@ -16,7 +19,8 @@ def http_get(path: str) -> Any:
     try:
         with urllib.request.urlopen(get_gateway_internal_url() + path, timeout=get_request_timeout()) as r:
             return json.loads(r.read().decode('utf-8') or 'null')
-    except Exception:
+    except Exception as exc:
+        _log.debug("GET %s failed: %s", path, exc)
         return None
 
 

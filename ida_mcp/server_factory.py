@@ -5,24 +5,9 @@ from __future__ import annotations
 from typing import Optional
 
 from .config import get_server_name
-from .rpc import get_resources, get_tool_specs
+from .rpc import get_resources, get_tool_specs, ensure_api_modules_loaded
 
 __version__ = "0.2.0"
-
-
-def _ensure_api_modules_loaded() -> None:
-    # Import side-effect modules only when assembling the runtime server.
-    from . import api_analysis  # noqa: F401
-    from . import api_core  # noqa: F401
-    from . import api_debug  # noqa: F401
-    from . import api_lifecycle  # noqa: F401
-    from . import api_memory  # noqa: F401
-    from . import api_modeling  # noqa: F401
-    from . import api_modify  # noqa: F401
-    from . import api_python  # noqa: F401
-    from . import api_resources  # noqa: F401
-    from . import api_stack  # noqa: F401
-    from . import api_types  # noqa: F401
 
 
 def create_mcp_server(
@@ -32,7 +17,7 @@ def create_mcp_server(
     """Create the FastMCP server used inside an IDA instance."""
     from fastmcp import FastMCP
 
-    _ensure_api_modules_loaded()
+    ensure_api_modules_loaded()
 
     if name is None:
         name = get_server_name()

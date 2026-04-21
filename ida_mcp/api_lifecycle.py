@@ -22,8 +22,10 @@ def close_ida(
     """Close IDA Pro instance. Warning: This terminates the process."""
     try:
         if save:
-            if ida_loader is None or not ida_loader.save_database(None, 0):
-                return {"error": "Failed to save database"}
+            if ida_loader is None:
+                return {"error": "IDA runtime unavailable (ida_loader)"}
+            # ida_loader.save_database() returns None (void) on success.
+            ida_loader.save_database(None, 0)
 
         if ida_pro is None:
             return {"error": "IDA runtime unavailable"}

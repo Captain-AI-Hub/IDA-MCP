@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
-__all__ = ["server", "start_http_proxy", "stop_http_proxy", "is_http_proxy_running", "get_http_url"]
+__all__ = ["server"]
 
 
 def __getattr__(name: str) -> Any:
@@ -15,8 +15,4 @@ def __getattr__(name: str) -> Any:
         from ._server import server
 
         return server
-    if name in {"start_http_proxy", "stop_http_proxy", "is_http_proxy_running", "get_http_url"}:
-        from . import http_server
-
-        return getattr(http_server, name)
     raise AttributeError(name)

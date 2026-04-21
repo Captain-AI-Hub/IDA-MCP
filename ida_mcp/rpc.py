@@ -87,50 +87,6 @@ def get_resources() -> Dict[str, Callable]:
     return dict(_resources)
 
 
-def get_tool_info(fn: Callable) -> dict:
-    """Extract schema-friendly metadata for a registered tool."""
-    sig = inspect.signature(fn)
-    params = []
-
-    try:
-        hints = get_type_hints(fn, include_extras=True)
-    except Exception:
-        hints = {}
-
-    for param_name, param in sig.parameters.items():
-        param_info: dict[str, Any] = {"name": param_name}
-
-        if param_name in hints:
-            hint = hints[param_name]
-            if hasattr(hint, "__metadata__"):
-                param_info["type"] = str(hint.__origin__) if hasattr(hint, "__origin__") else str(hint)
-                for meta in hint.__metadata__:
-                    if isinstance(meta, str):
-                        param_info["description"] = meta
-                    elif hasattr(meta, "description"):
-                        param_info["description"] = meta.description
-            else:
-                param_info["type"] = str(hint)
-
-        if param.default is not inspect.Parameter.empty:
-            param_info["default"] = param.default
-            param_info["required"] = False
-        else:
-            param_info["required"] = True
-
-        params.append(param_info)
-
-    spec = _tool_specs.get(fn.__name__) or _build_tool_spec(fn)
-    return {
-        "name": spec.name,
-        "description": spec.description,
-        "parameters": params,
-        "is_unsafe": spec.unsafe,
-        "execution_mode": spec.execution_mode,
-        "module_name": spec.module_name,
-    }
-
-
 def is_unsafe(fn: Callable) -> bool:
     spec = _tool_specs.get(fn.__name__)
     if spec is not None and spec.fn is fn:
@@ -138,7 +94,31 @@ def is_unsafe(fn: Callable) -> bool:
     return _unsafe_flag(fn)
 
 
-def clear_registry() -> None:
+def reset_registry() -> None:
+    """Clear all registered tools, specs, and resources.
+
+    Intended exclusively for use in test teardown.
+    """
     _tools.clear()
     _tool_specs.clear()
     _resources.clear()
+
+
+def ensure_api_modules_loaded() -> None:
+    """Import all api_* modules to populate the tool and resource registries.
+
+    This triggers the @tool and @resource decorator side-effects that
+    populate ``_tools``, ``_tool_specs``, and ``_resources``.  It is safe
+    to call multiple times (subsequent calls are no-ops).
+    """
+    from . import api_analysis  # noqa: F401
+    from . import api_core  # noqa: F401
+    from . import api_debug  # noqa: F401
+    from . import api_lifecycle  # noqa: F401
+    from . import api_memory  # noqa: F401
+    from . import api_modeling  # noqa: F401
+    from . import api_modify  # noqa: F401
+    from . import api_python  # noqa: F401
+    from . import api_resources  # noqa: F401
+    from . import api_stack  # noqa: F401
+    from . import api_types  # noqa: F401

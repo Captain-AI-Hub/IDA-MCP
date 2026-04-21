@@ -15,6 +15,7 @@ from .. import registry
 from ..config import (
     get_ida_default_port,
     get_ida_path,
+    get_ida_python,
     get_open_in_ida_bundle_dir,
     is_open_in_ida_autonomous_enabled,
     is_wsl_path_bridge_enabled,
@@ -366,6 +367,17 @@ def open_in_ida(
         env = os.environ.copy()
         env["IDA_MCP_PORT"] = str(reserved_port)
         env["IDA_MCP_AUTO_START"] = "1"
+        # Pass the ida-python site-packages directory via a private env var.
+        # The IDA-MCP plugin inside IDA reads this and calls
+        # site.addsitedir() to make third-party packages importable.
+        # Using IDAMCP_PYTHONPATH instead of PYTHONPATH to avoid interfering
+        # with IDA's own Python initialization.
+        ida_python_bin = get_ida_python()
+        if ida_python_bin:
+            _ida_python_dir = os.path.dirname(ida_python_bin)
+            _site_dir = os.path.join(_ida_python_dir, "Lib", "site-packages")
+            if os.path.isdir(_site_dir):
+                env["IDAMCP_PYTHONPATH"] = _site_dir
         cwd = os.path.dirname(local_target_ida) or None
         try:
             proc = subprocess.Popen(

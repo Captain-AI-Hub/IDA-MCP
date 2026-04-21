@@ -20,9 +20,8 @@ from .config import (
     get_http_port,
     get_request_timeout,
 )
-from .proxy._http import http_post
 from .proxy._state import choose_port, get_instances, is_registered_port, is_valid_port
-from .errors import error_payload, normalize_error_payload
+from .errors import error_payload
 
 
 def gateway_status_payload() -> dict[str, Any]:
@@ -123,35 +122,26 @@ def call_tool(
     port: Optional[int] = None,
     timeout: Optional[int] = None,
 ) -> dict[str, Any]:
-    selection = select_target_port(port)
-    if "error" in selection:
-        return selection
+    from ._state import forward
 
-    body: dict[str, Any] = {
-        "tool": tool_name,
-        "params": params or {},
-        "port": selection["selected_port"],
-    }
-    if timeout and timeout > 0:
-        body["timeout"] = timeout
-    raw = http_post(
-        "/call", body, timeout=(timeout + 15) if timeout and timeout > 0 else None
-    )
-    if not isinstance(raw, dict):
-        return error_payload("gateway_unavailable", "Failed to connect to the gateway.")
-    if "error" in raw:
-        return normalize_error_payload(
-            raw,
-            "tool_call_failed",
-            f"Gateway rejected tool call for {tool_name}.",
-            tool=tool_name,
-            port=selection["selected_port"],
+    raw = forward(tool_name, params=params, port=port, timeout=timeout)
+    if isinstance(raw, dict) and "error" in raw:
+        return raw
+
+    # Resolve instance metadata for the response
+    target_port = port or (raw.get("port") if isinstance(raw, dict) else None)
+    instance = None
+    if target_port:
+        instance = next(
+            (dict(e) for e in get_instances() if e.get("port") == target_port),
+            None,
         )
+
     return {
         "tool": tool_name,
-        "selected_port": selection["selected_port"],
-        "instance": selection.get("instance"),
-        "data": raw.get("data", raw),
+        "selected_port": target_port,
+        "instance": instance,
+        "data": raw,
     }
 
 
