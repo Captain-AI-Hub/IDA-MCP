@@ -16,6 +16,9 @@ dependencies = [
    "PySide6==6.11.0",
    "deepagents==0.5.3",
    "langgraph==1.1.6",
+   "langchain-openai>=1.0.0",
+   "langchain-anthropic>=1.0.0",
+   "langchain-mcp-adapters>=0.1.0",
    "pydantic==2.13.1",
    "pygments==2.20.0",
    "markdown==3.10.2",
@@ -27,6 +30,7 @@ dev = [
    "pytest==9.0.3",
    "pur==7.3.3",
    "zstandard==0.25.0",
+   "imageio==2.37.3",
 ]
 
 [project.scripts]

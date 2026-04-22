@@ -38,4 +38,4 @@ python launcher.py
 
 ## 打包
 
-Nuitka 打包脚本在 `packaging/build_nuitka.py`。打包时 `resources/` 目录会被包含在分发物中。
+Nuitka 打包脚本在 `build_helpers/build_nuitka.py`。打包时 `resources/` 目录会被包含在分发物中。

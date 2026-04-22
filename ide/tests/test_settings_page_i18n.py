@@ -128,6 +128,14 @@ def test_settings_page_language_switch_rebuilds_without_deleting_core_widgets() 
     assert category_list.item(5).text() == "Skills"
     assert stack.count() == 6
     assert page._save_hint_labels[-1].text().startswith("Save writes IDE config")
+
+    # Wait for the background check worker to finish and populate fields.
+    # The install check runs in a QThread; process events until it completes.
+    ctrl = page._install_ctrl
+    if ctrl._check_worker is not None:
+        ctrl._check_worker.wait(3000)
+    QApplication.processEvents()
+
     assert page._requirements_path.text().endswith("requirements.txt")
     assert isinstance(page._requirements_table, QTableWidget)
     assert page._requirements_table.rowCount() == 2

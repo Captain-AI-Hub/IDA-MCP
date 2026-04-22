@@ -4,7 +4,7 @@ import importlib.util
 from pathlib import Path
 
 
-_MODULE_PATH = Path(__file__).resolve().parents[1] / "packaging" / "build_nuitka.py"
+_MODULE_PATH = Path(__file__).resolve().parents[1] / "build_helpers" / "build_nuitka.py"
 _SPEC = importlib.util.spec_from_file_location(
     "ide_packaging_build_nuitka", _MODULE_PATH
 )

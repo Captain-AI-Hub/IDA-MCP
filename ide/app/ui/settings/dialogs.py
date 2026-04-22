@@ -86,7 +86,6 @@ class ModelProviderDialog(QDialog):
             ("openai_responses", self._t("settings.model.api_mode.openai_responses")),
             ("openai_compatible", self._t("settings.model.api_mode.openai_compatible")),
             ("anthropic", self._t("settings.model.api_mode.anthropic")),
-            ("gemini", self._t("settings.model.api_mode.gemini")),
         ]
         for value, label in self._api_mode_items:
             self._api_mode_combo.addItem(label, value)
@@ -117,12 +116,6 @@ class ModelProviderDialog(QDialog):
         layout.addWidget(self._separator())
         layout.addSpacing(4)
 
-        # --- Section: State ---
-        layout.addWidget(self._field_label(self._t("settings.skills.enabled")))
-        self._enabled_check = QCheckBox()
-        self._enabled_check.setChecked(True)
-        layout.addWidget(self._enabled_check)
-
         # Validation error label (hidden until needed)
         self._error_label = QLabel("")
         self._error_label.setObjectName("settingsErrorLabel")
@@ -149,7 +142,6 @@ class ModelProviderDialog(QDialog):
             self._model_id_edit.setText(self._provider.model_name or "")
             self._top_p_spin.setValue(self._provider.top_p)
             self._temp_spin.setValue(self._provider.temperature)
-            self._enabled_check.setChecked(self._provider.enabled)
             # Set api_mode combo
             for i, (value, _) in enumerate(self._api_mode_items):
                 if value == self._provider.api_mode:
@@ -166,7 +158,9 @@ class ModelProviderDialog(QDialog):
             "model_name": self._model_id_edit.text().strip(),
             "top_p": self._top_p_spin.value(),
             "temperature": self._temp_spin.value(),
-            "enabled": self._enabled_check.isChecked(),
+            # enabled is controlled from the card toggle, not the dialog.
+            # Preserve existing state when editing; default True for new.
+            "enabled": self._provider.enabled if self._provider else True,
         }
 
     def _section_label(self, text: str) -> QLabel:

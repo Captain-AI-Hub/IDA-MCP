@@ -679,13 +679,19 @@ class Theme:
         QFrame#modelProviderCard:hover {{
             border: 1px solid {c.accent};
         }}
-        QFrame#modelProviderCard[enabled="true"] {{
+        QFrame#modelProviderCard[provider_enabled="true"],
+        QFrame#modelProviderCard[server_enabled="true"],
+        QFrame#modelProviderCard[skill_enabled="true"] {{
             border-left: 3px solid {c.status_ok};
         }}
-        QFrame#modelProviderCard[enabled="true"]:hover {{
+        QFrame#modelProviderCard[provider_enabled="true"]:hover,
+        QFrame#modelProviderCard[server_enabled="true"]:hover,
+        QFrame#modelProviderCard[skill_enabled="true"]:hover {{
             border-left: 3px solid {c.status_ok};
         }}
-        QFrame#modelProviderCard[enabled="false"] {{
+        QFrame#modelProviderCard[provider_enabled="false"],
+        QFrame#modelProviderCard[server_enabled="false"],
+        QFrame#modelProviderCard[skill_enabled="false"] {{
             border-left: 3px solid {c.border};
         }}
 
@@ -796,6 +802,117 @@ class Theme:
         QFrame#dialogSeparator {{
             background: {c.border_light};
             max-height: 1px;
+        }}
+
+        /* ---- Chat page ---- */
+        QFrame#chatComposerContainer {{
+            background: {c.input_bg};
+            border: 1px solid {c.border};
+            border-radius: 16px;
+        }}
+        QFrame#chatBubbleUser {{
+            background: {c.accent};
+            color: {c.accent_text};
+            border-radius: 12px;
+            border: none;
+            margin-left: 48px;
+        }}
+        QFrame#chatBubbleAssistant {{
+            background: {c.input_bg};
+            color: {c.text_primary};
+            border-radius: 12px;
+            border: 1px solid {c.border_light};
+            margin-right: 48px;
+        }}
+        QLabel#chatBubbleText {{
+            font-size: 10pt;
+        }}
+        QFrame#toolTraceCard {{
+            background: {c.border_light};
+            border: 1px solid {c.border};
+            border-radius: 8px;
+            margin-left: 24px;
+            margin-right: 24px;
+        }}
+        QLabel#toolTraceTool {{
+            color: {c.text_secondary};
+            font-size: 9pt;
+            font-weight: 600;
+        }}
+        QLabel#toolTraceStatus {{
+            color: {c.text_secondary};
+            font-size: 8pt;
+        }}
+        QTextEdit#chatInput {{
+            background: transparent;
+            color: {c.text_primary};
+            border: none;
+            border-radius: 12px;
+            padding: 6px 8px;
+            font-size: 10pt;
+        }}
+        QTextEdit#chatInput:focus {{
+            background: transparent;
+        }}
+        QTextEdit#chatInput:disabled {{
+            color: {c.text_secondary};
+        }}
+        QPushButton#chatModelButton {{
+            background: transparent;
+            color: {c.text_secondary};
+            border: none;
+            border-radius: 12px;
+            padding: 4px 12px;
+            font-size: 9pt;
+            font-weight: 500;
+            text-align: left;
+        }}
+        QPushButton#chatModelButton:hover {{
+            background: {c.accent_subtle};
+            color: {c.accent};
+        }}
+        QPushButton#chatSendRoundButton {{
+            background: {c.accent};
+            color: {c.accent_text};
+            border: none;
+            border-radius: 16px;
+            font-size: 14pt;
+            font-weight: bold;
+            padding: 0px;
+        }}
+        QPushButton#chatSendRoundButton:hover {{
+            background: {c.accent_hover};
+        }}
+        QPushButton#chatSendRoundButton:disabled {{
+            background: {c.border_light};
+            color: {c.text_secondary};
+        }}
+        QMenu#chatModelMenu {{
+            background: {c.panel_bg};
+            border: 1px solid {c.border};
+            border-radius: 8px;
+            padding: 4px;
+        }}
+        QMenu#chatModelMenu::item {{
+            padding: 6px 20px;
+            border-radius: 4px;
+            color: {c.text_primary};
+        }}
+        QMenu#chatModelMenu::item:selected {{
+            background: {c.accent_subtle};
+            color: {c.accent};
+        }}
+        QMenu#chatModelMenu::item:checked {{
+            background: {c.accent_subtle};
+            color: {c.accent};
+            font-weight: 600;
+        }}
+        QMenu#chatModelMenu::indicator {{
+            width: 8px;
+            height: 8px;
+            border-radius: 4px;
+            background: {c.accent};
+            margin-left: 4px;
         }}
         """
 

@@ -6,6 +6,10 @@ Tables:
     model_providers  — one row per LLM model provider
     mcp_servers      — one row per MCP server entry
     skills           — one row per skill entry
+    conversations    — one row per chat conversation
+    conversation_messages — one row per chat message
+    conversation_mcp_servers — conversation ↔ MCP server bindings
+    tool_executions  — one row per tool call trace
 """
 
 from __future__ import annotations
@@ -19,7 +23,7 @@ from shared.paths import ensure_directory, get_ide_user_config_root
 
 DATABASE_FILENAME = "ide.db"
 
-_SCHEMA_VERSION = 4
+_SCHEMA_VERSION = 5
 
 
 def _coerce(value: str, target_type: type) -> Any:
@@ -91,6 +95,53 @@ CREATE TABLE IF NOT EXISTS skills (
     file_path   TEXT    NOT NULL DEFAULT '',
     install_dir TEXT    NOT NULL DEFAULT '',
     installed_at TEXT   NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS conversations (
+    id          TEXT PRIMARY KEY,
+    title       TEXT    NOT NULL DEFAULT '',
+    provider_id INTEGER,
+    model_name_snapshot TEXT NOT NULL DEFAULT '',
+    skill_id    INTEGER,
+    system_prompt_override TEXT,
+    status      TEXT    NOT NULL DEFAULT 'idle',
+    created_at  TEXT    NOT NULL DEFAULT '',
+    updated_at  TEXT    NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS conversation_messages (
+    id               TEXT PRIMARY KEY,
+    conversation_id  TEXT    NOT NULL,
+    turn_id          TEXT    NOT NULL DEFAULT '',
+    role             TEXT    NOT NULL,
+    content          TEXT    NOT NULL DEFAULT '',
+    tool_name        TEXT,
+    tool_call_id     TEXT,
+    metadata_json    TEXT,
+    created_at       TEXT    NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS conversation_mcp_servers (
+    conversation_id     TEXT    NOT NULL,
+    mcp_server_id       INTEGER NOT NULL,
+    enabled             INTEGER NOT NULL DEFAULT 1,
+    tool_allowlist_json TEXT,
+    PRIMARY KEY (conversation_id, mcp_server_id)
+);
+
+CREATE TABLE IF NOT EXISTS tool_executions (
+    id               TEXT PRIMARY KEY,
+    conversation_id  TEXT    NOT NULL,
+    turn_id          TEXT    NOT NULL DEFAULT '',
+    mcp_server_id    INTEGER,
+    server_name      TEXT    NOT NULL DEFAULT '',
+    tool_name        TEXT    NOT NULL DEFAULT '',
+    args_json        TEXT    NOT NULL DEFAULT '',
+    result_summary   TEXT,
+    status           TEXT    NOT NULL DEFAULT 'started',
+    error_text       TEXT,
+    started_at       TEXT    NOT NULL DEFAULT '',
+    finished_at      TEXT
 );
 """
 
@@ -288,6 +339,20 @@ class DatabaseStore:
                 if col not in cols:
                     conn.execute(f"ALTER TABLE skills ADD COLUMN {col} {spec}")
 
+        # v5 tables are created by _CREATE_TABLES_SQL (IF NOT EXISTS).
+        # v5 also extends skills with prompt/tool config columns.
+        if old < 5:
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(skills)").fetchall()}
+            for col, spec in (
+                ("system_prompt_template", "TEXT NOT NULL DEFAULT ''"),
+                ("tool_allowlist_json", "TEXT"),
+                ("tool_denylist_json", "TEXT"),
+                ("model_override", "TEXT NOT NULL DEFAULT ''"),
+                ("temperature_override", "REAL"),
+            ):
+                if col not in cols:
+                    conn.execute(f"ALTER TABLE skills ADD COLUMN {col} {spec}")
+
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self._db_path))
         conn.execute("PRAGMA journal_mode=WAL")
@@ -311,6 +376,10 @@ class DatabaseStore:
         "model_providers",
         "mcp_servers",
         "skills",
+        "conversations",
+        "conversation_messages",
+        "conversation_mcp_servers",
+        "tool_executions",
     })
 
     @classmethod

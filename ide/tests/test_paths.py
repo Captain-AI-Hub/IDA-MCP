@@ -22,7 +22,7 @@ def test_runtime_path_helpers_resolve_inside_ide_project() -> None:
     assert get_workspaces_root() == project_root / "workspaces"
     assert get_build_root() == project_root / "build"
     assert get_nuitka_output_root() == project_root / "build" / "nuitka"
-    assert get_packaging_root() == project_root / "packaging"
+    assert get_packaging_root() == project_root / "build_helpers"
 
 
 def test_ida_mcp_resources_dir_contains_required_files() -> None:

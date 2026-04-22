@@ -17,7 +17,7 @@ def get_runtime_root() -> Path:
 
 
 def get_packaging_root() -> Path:
-    return get_runtime_root() / "packaging"
+    return get_runtime_root() / "build_helpers"
 
 
 def get_logs_root() -> Path:

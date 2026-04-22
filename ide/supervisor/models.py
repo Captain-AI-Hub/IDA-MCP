@@ -279,13 +279,10 @@ class SupervisorSnapshot:
 API_MODE_OPENAI_RESPONSES = "openai_responses"
 API_MODE_OPENAI_COMPATIBLE = "openai_compatible"
 API_MODE_ANTHROPIC = "anthropic"
-API_MODE_GEMINI = "gemini"
-
 ALL_API_MODES = (
     API_MODE_OPENAI_RESPONSES,
     API_MODE_OPENAI_COMPATIBLE,
     API_MODE_ANTHROPIC,
-    API_MODE_GEMINI,
 )
 
 

@@ -41,6 +41,8 @@ from app.ui.workspace.directory_tree import DirectoryTreeWidget
 from app.ui.workspace.hex_view import HexViewWidget
 from app.ui.workspace.code_view import CodeViewWidget
 from app.ui.workspace.image_view import ImageViewWidget
+from app.ui.chat.page import ChatPage
+from app.chat.chat_service import ChatService
 
 
 SIDEBAR_ITEMS = (
@@ -82,8 +84,9 @@ class MainWindow(QMainWindow):
         self._status_detail_labels: dict[str, QLabel] = {}
         self._status_buttons: dict[str, QPushButton] = {}
 
-        self._chat_view = QTextEdit()
-        self._chat_view.setReadOnly(True)
+        self._chat_service = ChatService()
+        self._chat_page = ChatPage(self._i18n)
+        self._chat_page.set_chat_service(self._chat_service)
 
         self._plan_view = QTreeWidget()
 
@@ -109,6 +112,7 @@ class MainWindow(QMainWindow):
 
         self._build_shell()
         self._gateway.refresh()
+        self._chat_service.start()
 
     # ------------------------------------------------------------------
     # Helpers
@@ -188,26 +192,7 @@ class MainWindow(QMainWindow):
         return self._page_stack
 
     def _build_chat_page(self) -> QWidget:
-        left_split = QSplitter(Qt.Vertical)
-        left_split.addWidget(
-            self._build_panel("main.panel.plan", self._plan_view, "plan")
-        )
-        left_split.addWidget(
-            self._build_panel("main.panel.ida_status", self._ida_view, "ida_status")
-        )
-        left_split.setSizes([380, 260])
-
-        center = self._build_panel("main.panel.chat", self._chat_view, "chat")
-        right = self._build_panel(
-            "main.panel.workspace", self._workspace_view, "workspace"
-        )
-
-        main_split = QSplitter(Qt.Horizontal)
-        main_split.addWidget(left_split)
-        main_split.addWidget(center)
-        main_split.addWidget(right)
-        main_split.setSizes([320, 760, 340])
-        return main_split
+        return self._chat_page
 
     def _build_fs_page(self) -> QWidget:
         # Stacked widget: [0] hex, [1] code, [2] image
@@ -467,7 +452,6 @@ class MainWindow(QMainWindow):
 
     def _retranslate_ui(self) -> None:
         self.setWindowTitle(self._t("app.title"))
-        self._chat_view.setPlainText(self._t("main.placeholder.chat"))
         self._plan_view.setHeaderLabels(
             [self._t("main.header.plan"), self._t("main.header.state")]
         )
@@ -511,4 +495,6 @@ class MainWindow(QMainWindow):
         """Ensure child pages clean up background workers."""
         if hasattr(self, "_settings_view") and self._settings_view is not None:
             self._settings_view.cleanup()
+        if hasattr(self, "_chat_service") and self._chat_service is not None:
+            self._chat_service.stop()
         super().closeEvent(event)

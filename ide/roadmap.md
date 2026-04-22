@@ -1,127 +1,161 @@
-# IDE Roadmap
+# Sarma Chat — Architecture & Roadmap
 
-## 子项目定位
+## Overview
 
-`ide/` 是一个基于 **PySide6** 的跨平台桌面 IDE，用于承载 IDA-MCP 的多 Agent 审计工作台，以及 `ida_mcp` 的安装、配置、启动、停止与状态检查。
-
-它不是 Web 子项目，也不安装到 IDA plugin 目录。
-
----
-
-## 核心目标
-
-### 1. 作为桌面工作台
-
-- 左上显示审计 plan 进度
-- 左下显示 IDA 状态、当前文件与模式
-- 中间提供 Agent 群聊天区
-- 右侧展示 workspace、文件树和 artifacts
-- 侧边栏提供 `Chat` / `Files` / `Settings` / `Status`
-
-### 2. 作为 ida_mcp 控制中心
-
-- 探测 Python 和 IDA 环境
-- 安装和修复 `ida_mcp`
-- 启动/停止 gateway
-- 启动/关闭 IDA
-- 管理配置 profile
-- 提供健康检查与状态聚合
-
-### 3. 作为审计运行环境
-
-- 管理 workspace
-- 使用 SQLite 持久化 run / plan / thread / message / artifact / checkpoint
-- 接入 LangGraph + DeepAgents
-- 支持恢复、人工介入和报告导出
+Chat feature for the Sarma IDE that lets users interact with IDA Pro via natural language.
+Backend: LangGraph ReAct Agent + `langchain-mcp-adapters` MCP tools.
+Frontend: PySide6 Chat page with streaming token rendering.
 
 ---
 
-## 技术路线
+## Architecture
 
-- UI：`PySide6`
-- Supervisor：Python 本地后台进程
-- Persistence：`SQLite`
-- Orchestration：`LangGraph + DeepAgents`
-- 底层能力：`ida_mcp`
-- 分发：`Nuitka`
+### Layering
 
----
-
-## 推荐进程模型
-
-```text
-PySide6 IDE UI
-  <-> Supervisor
-        |- ida_mcp gateway
-        |- IDA instance A
-        |- IDA instance B
+```
+PySide6 UI  (app/ui/chat/)
+     │  Qt Signal/Slot
+ChatController  (app/chat/chat_service.py)
+     │  QThread + asyncio event loop
+AgentFactory  →  create_react_agent(model, tools, prompt)
+     │
+McpClientPool  →  MultiServerMCPClient  →  MCP Servers (IDA-MCP, etc.)
+     │
+Persistence   →  SQLite (conversations, messages, tool_executions)
 ```
 
-原则：
+### Data Flow
 
-- UI 不直接管理复杂进程
-- Supervisor 是唯一控制面
-- `ida_mcp` 继续作为底层能力层
+```
+User → Composer → ChatController → ChatService (QThread)
+                                          │
+                                   AgentFactory.build()
+                                   ├── init_chat_model(provider)
+                                   ├── McpClientPool.get_tools(servers)
+                                   ├── SkillResolver.filter_tools(skill)
+                                   └── create_react_agent(model, tools, prompt)
+                                          │
+                                   agent.astream(input, stream_mode="messages")
+                                          │
+                                   StreamEvent normalization
+                                          │
+                                   Qt Signal → MessageList / ToolTracePanel
+                                          │
+                                   Persistence (async save messages/traces)
+```
 
----
+### Key Design Decisions
 
-## 阶段规划
-
-## P0：方向切换与骨架落地
-
-- 建立 `ide/` 子项目文档
-- 建立 `app/`、`supervisor/`、`shared/`、`bootstrap/` 骨架
-- 明确 `ida_mcp` 与 `ide` 的边界
-
-## P1：Supervisor MVP
-
-- Python 环境探测
-- IDA 路径探测
-- `ida_mcp` 安装检查
-- gateway 启动/停止/状态
-- IDA 启动/关闭/状态
-
-## P2：PySide6 最小 IDE 壳
-
-- 主窗口
-- Sidebar：Chat / Files / Settings / Status
-- Status 页面
-- Settings 页面
-- IDA 状态面板
-
-## P3：工作台主体
-
-- Plan 面板
-- Chat 面板
-- Workspace 面板
-- Files 双模式查看器（text / hex）
-
-## P4：审计运行与多 Agent
-
-- workspace + SQLite
-- run / plan / thread / message / artifact / checkpoint
-- LangGraph + DeepAgents 编排
-- 人工介入与恢复
-
-## P5：产品化
-
-- 基于 Nuitka 的打包与分发
-- 平台适配（Windows / Linux / macOS）
-- 安装修复和日志诊断
-
-## Nuitka 约束
-
-- IDE 运行时不能依赖上级仓库源码结构
-- 避免动态导入、反射式页面发现和隐式插件系统
-- 资源路径必须统一走运行时路径助手
-- `ida_mcp` 作为外部组件由 IDE 托管，不与 IDE 一起静态内嵌为源码依赖
-- 打包脚本、参数与平台差异处理统一收敛到 `ide/packaging/`
+1. **Agent**: `create_react_agent` (v1); custom `StateGraph` or deepagents (v2+).
+2. **Runtime**: QThread + embedded asyncio loop (v1); subprocess IPC (v3).
+3. **MCP lifecycle**: Persistent client pool, lazy connect, reconnect on failure.
+4. **Skills**: Declarative — system prompt overlay + tool allow/deny list + optional model/temperature override.
+5. **Streaming**: Event-based (`StreamEvent`); LangGraph `messages` mode → normalized events → Qt signals.
+6. **Sessions**: Multi-conversation from day 1, persisted in SQLite.
+7. **Error handling**: 3-layer (connection → tool call → run). Tool failures don't crash turns.
 
 ---
 
-## 明确不做的方向
+## Module Structure (New Files)
 
-- 不再使用 Web / React 作为主路线
-- 不把 IDE 安装进 IDA plugin 目录
-- 不让 UI 直接耦合 `ida_mcp` 内部实现
-- 不把完整通用 IDE 作为第一阶段目标
+```
+app/chat/
+├── __init__.py
+├── models.py              # Conversation, ChatMessage, StreamEvent, AgentRunConfig, ResolvedSkill
+├── prompts.py             # BASE_SYSTEM_PROMPT + build_system_prompt()
+├── skill_resolver.py      # Skill → prompt overlay + tool filter
+├── mcp_pool.py            # MCP client pool (MultiServerMCPClient lifecycle)
+├── agent_factory.py       # build LangGraph ReAct agent from config
+├── streaming.py           # LangGraph events → StreamEvent normalization
+├── chat_service.py        # ChatService: QThread + asyncio orchestration
+├── persistence.py         # SQLite CRUD for conversations/messages/traces
+├── errors.py              # Chat-specific exceptions
+
+app/ui/chat/
+├── __init__.py            # (exists)
+├── page.py                # ChatPage: layout + child widgets
+├── message_list.py        # MessageList: renders chat bubbles
+├── composer.py            # Composer: input area + send button
+├── tool_trace_panel.py    # ToolTracePanel: tool call timeline
+├── session_sidebar.py     # SessionSidebar: conversation list
+├── provider_selector.py   # ProviderSelector: model dropdown
+└── skill_selector.py      # SkillSelector: skill dropdown
+```
+
+## Database Schema (Migration v5)
+
+New tables: `conversations`, `conversation_messages`, `conversation_mcp_servers`, `tool_executions`.
+Extended `skills` table: `system_prompt_template`, `tool_allowlist_json`, `tool_denylist_json`, `model_override`, `temperature_override`.
+
+---
+
+## Roadmap
+
+### Phase 1 — Minimum Viable Chat
+
+Goal: Basic working chat with a single LLM provider and MCP tool calling.
+
+- [ ] Data models (`app/chat/models.py`)
+- [ ] Database migration v5 + persistence (`shared/database.py`, `app/chat/persistence.py`)
+- [ ] System prompts (`app/chat/prompts.py`)
+- [ ] MCP client pool (`app/chat/mcp_pool.py`)
+- [ ] Agent factory (`app/chat/agent_factory.py`)
+- [ ] Streaming event normalization (`app/chat/streaming.py`)
+- [ ] Errors (`app/chat/errors.py`)
+- [ ] Chat service with QThread + asyncio (`app/chat/chat_service.py`)
+- [ ] Chat page UI — page, message list, composer (`app/ui/chat/`)
+- [ ] Integration into MainWindow
+- [ ] i18n entries for Chat UI
+
+### Phase 2 — Complete Experience
+
+- [ ] Tool trace panel
+- [ ] Session sidebar (multi-conversation)
+- [ ] Skill resolver + skill selector
+- [ ] Provider selector
+- [ ] Markdown rendering + code highlighting
+- [ ] Extended SkillEntry model + settings UI for Chat config
+
+### Phase 3 — Production Hardening
+
+- [ ] Migrate to subprocess (`chat_runtime/`)
+- [ ] IPC protocol (stdin/stdout JSON Lines)
+- [ ] Cancel/retry mechanism
+- [ ] Token usage tracking
+- [ ] Error recovery and degraded mode
+- [ ] Large result truncation/summarization
+- [ ] Performance tuning
+
+### Phase 4 — Advanced Features (On Demand)
+
+- [ ] deepagents multi-agent orchestration
+- [ ] Custom StateGraph (plan/execute split)
+- [ ] Human-in-the-loop tool confirmation
+- [ ] Skill import/export/marketplace
+- [ ] Conversation branching/comparison
+
+---
+
+## Dependencies
+
+Already declared in `ide/requirements.txt`:
+- `langgraph==1.1.6`
+- `deepagents==0.5.3`
+- `pydantic==2.13.1`
+
+Runtime dependency (pulled by langgraph/langchain):
+- `langchain-mcp-adapters` — MCP → LangChain Tool bridge
+- `langchain-core` — Base abstractions
+
+---
+
+## Risk Register
+
+| Risk | Impact | Mitigation |
+|------|--------|------------|
+| Qt + asyncio conflict | UI freeze | QThread isolation; v3 → subprocess |
+| Too many MCP tools | Agent quality drop | Skill tool allowlists |
+| Large tool outputs | Token cost spike | Truncate/summarize before re-inject |
+| MCP server instability | Chat interruption | Structured errors + reconnect + degraded mode |
+| Provider API differences | Inconsistent behavior | `init_chat_model` abstraction + config snapshot |
+| LangGraph API drift | Maintenance burden | `StreamEvent` isolation layer |

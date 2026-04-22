@@ -53,7 +53,7 @@ ide/
 │       ├── ida_mcp.py
 │       ├── ida_mcp/          # 完整 ida_mcp 包
 │       └── requirements.txt
-├── packaging/
+├── build_helpers/
 │   └── build_nuitka.py       # Nuitka 打包
 └── tests/                    # pytest 测试
 ```

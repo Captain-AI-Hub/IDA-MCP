@@ -520,6 +520,21 @@ class SettingsPage(QWidget):
         self._settings_service.remove_model_provider(provider_id)
         self._refresh_model_cards()
 
+    def _toggle_provider_enabled(
+        self, provider_id: int, state: int, card: QFrame
+    ) -> None:
+        """Toggle provider enabled state and persist immediately."""
+        from PySide6.QtCore import Qt as QtCoreQt
+
+        enabled = state == QtCoreQt.CheckState.Checked.value
+        self._settings_service.update_model_provider(
+            provider_id, enabled=enabled
+        )
+        # Update card style without rebuilding the whole list
+        card.setProperty("provider_enabled", "true" if enabled else "false")
+        card.style().unpolish(card)
+        card.style().polish(card)
+
     def _refresh_model_cards(self) -> None:
         # Remove existing cards (keep the trailing stretch)
         while self._model_providers_layout.count():
@@ -548,7 +563,7 @@ class SettingsPage(QWidget):
         """Build a single model provider card widget."""
         card = QFrame()
         card.setObjectName("modelProviderCard")
-        card.setProperty("enabled", "true" if provider.enabled else "false")
+        card.setProperty("provider_enabled", "true" if provider.enabled else "false")
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(16, 12, 16, 12)
         card_layout.setSpacing(6)
@@ -557,10 +572,9 @@ class SettingsPage(QWidget):
             "openai_responses": self._t("settings.model.api_mode.openai_responses"),
             "openai_compatible": self._t("settings.model.api_mode.openai_compatible"),
             "anthropic": self._t("settings.model.api_mode.anthropic"),
-            "gemini": self._t("settings.model.api_mode.gemini"),
         }
 
-        # --- Header row: name + enabled badge + buttons ---
+        # --- Header row: name + enabled toggle + buttons ---
         header = QWidget()
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(0, 0, 0, 0)
@@ -574,11 +588,13 @@ class SettingsPage(QWidget):
         name_label.setFont(name_font)
         header_layout.addWidget(name_label)
 
-        enabled_label = QLabel(
-            "● " + (self._t("settings.bool.yes") if provider.enabled else self._t("settings.bool.no"))
+        enabled_check = QCheckBox(self._t("settings.skills.enabled"))
+        enabled_check.setChecked(provider.enabled)
+        enabled_check.setCursor(Qt.CursorShape.PointingHandCursor)
+        enabled_check.stateChanged.connect(
+            lambda state, pid=provider.id, c=card: self._toggle_provider_enabled(pid, state, c)
         )
-        enabled_label.setObjectName("cardBadgeEnabled" if provider.enabled else "cardBadgeDisabled")
-        header_layout.addWidget(enabled_label)
+        header_layout.addWidget(enabled_check)
 
         header_layout.addStretch(1)
 
@@ -751,7 +767,7 @@ class SettingsPage(QWidget):
         """Build a single MCP server card widget."""
         card = QFrame()
         card.setObjectName("modelProviderCard")
-        card.setProperty("enabled", "true" if server.enabled else "false")
+        card.setProperty("server_enabled", "true" if server.enabled else "false")
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(16, 12, 16, 12)
         card_layout.setSpacing(6)
@@ -1075,7 +1091,7 @@ class SettingsPage(QWidget):
         """Build a single skill card widget."""
         card = QFrame()
         card.setObjectName("modelProviderCard")
-        card.setProperty("enabled", "true" if skill.enabled else "false")
+        card.setProperty("skill_enabled", "true" if skill.enabled else "false")
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(16, 12, 16, 12)
         card_layout.setSpacing(6)
