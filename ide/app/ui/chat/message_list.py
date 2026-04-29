@@ -339,7 +339,7 @@ class ToolCallCard(QFrame):
         self._result_text = ""
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 8, 24, 8)
+        layout.setContentsMargins(4, 8, 4, 8)
         layout.setSpacing(4)
 
         # --- Header row: toggle arrow + icon + name + status ---

@@ -1277,6 +1277,8 @@ class Theme:
             background: {c.border_light};
             border: 1px solid {c.border};
             border-radius: {m.radius_lg};
+            margin-left: {m.spacing_4xl};
+            margin-right: {m.spacing_4xl};
         }}
         QLabel#toolTraceTool {{
             color: {c.text_secondary};
@@ -1298,6 +1300,8 @@ class Theme:
             background: {c.border_light};
             border: 1px solid {c.border};
             border-radius: {m.radius_lg};
+            margin-left: {m.spacing_4xl};
+            margin-right: {m.spacing_4xl};
         }}
         QFrame#toolCallCard:hover {{
             border-color: {c.accent};
@@ -1578,7 +1582,7 @@ class Theme:
             color: {c.text_primary};
             border: none;
             font-size: {m.font_size_base};
-            padding: 0px;
+            padding: 4px;
         }}"""
 
     # -- Tool trace panel --
