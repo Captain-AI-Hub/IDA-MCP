@@ -65,13 +65,11 @@ class MainWindow(QMainWindow):
         self.resize(1520, 960)
 
         # --- application icon ---
-        from pathlib import Path
+        from app.ui.icons import load_app_icon
 
-        _icon_path = Path(__file__).resolve().parents[2] / "resources" / "logo.png"
-        if _icon_path.exists():
-            from PySide6.QtGui import QIcon
-
-            self.setWindowIcon(QIcon(str(_icon_path)))
+        _icon = load_app_icon()
+        if _icon is not None:
+            self.setWindowIcon(_icon)
 
         # --- child widgets ---
         self._page_stack = QStackedWidget()

@@ -101,3 +101,54 @@ def make_sidebar_icons(
         key: _icon_from_path(factory(), qcolor, size)
         for key, factory in _SIDEBAR_ICON_FACTORIES.items()
     }
+
+
+# -- Application logo icon --
+
+_LOGO_SIZES = (16, 24, 32, 48, 64, 128, 256, 512)
+
+
+def load_app_icon() -> QIcon | None:
+    """Load the application logo as a QIcon with multiple sizes.
+
+    Uses the SVG source and renders it at all standard icon sizes so
+    that Linux window managers and taskbars can pick the right size.
+    Falls back to the PNG if SVG rendering is unavailable.
+    Returns ``None`` if no icon file is found.
+    """
+    from pathlib import Path
+
+    resources = Path(__file__).resolve().parents[2] / "resources"
+    svg_path = resources / "logo.svg"
+    png_path = resources / "logo.png"
+
+    icon = QIcon()
+
+    # Try SVG first — best quality at every size
+    if svg_path.exists():
+        try:
+            from PySide6.QtSvg import QSvgRenderer
+            from PySide6.QtGui import QImage, QPainter
+            from PySide6.QtCore import QRectF
+
+            renderer = QSvgRenderer(str(svg_path))
+            if renderer.isValid():
+                for sz in _LOGO_SIZES:
+                    img = QImage(sz, sz, QImage.Format.Format_ARGB32_Premultiplied)
+                    img.fill(Qt.GlobalColor.transparent)
+                    painter = QPainter(img)
+                    renderer.render(painter, QRectF(0, 0, sz, sz))
+                    painter.end()
+                    icon.addPixmap(QPixmap.fromImage(img))
+                if not icon.isNull():
+                    return icon
+        except Exception:
+            pass
+
+    # Fallback: single PNG
+    if png_path.exists():
+        icon.addFile(str(png_path))
+        if not icon.isNull():
+            return icon
+
+    return None

@@ -38,11 +38,11 @@ def main() -> int:
     app.setApplicationDisplayName("Sarma")
 
     # Set app-wide icon so taskbar and all windows inherit it
-    _icon_path = Path(__file__).resolve().parents[1] / "resources" / "logo.png"
-    if _icon_path.exists():
-        from PySide6.QtGui import QIcon
+    from app.ui.icons import load_app_icon
 
-        app.setWindowIcon(QIcon(str(_icon_path)))
+    _icon = load_app_icon()
+    if _icon is not None:
+        app.setWindowIcon(_icon)
 
     window = MainWindow()
     window.show()
