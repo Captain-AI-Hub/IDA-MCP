@@ -386,6 +386,7 @@ class Theme:
             self._card_edit_styles(c, m),
             self._danger_button_styles(c, m),
             self._card_separator_styles(c, m),
+            self._card_detail_styles(c, m),
             self._dialog_styles(c, m),
             self._chat_layout_styles(c, m),
             self._chat_role_styles(c, m),
@@ -1179,6 +1180,25 @@ class Theme:
             max-height: 1px;
         }}"""
 
+    # -- Card detail row --
+
+    @staticmethod
+    def _card_detail_styles(c: _Palette, m: _Metrics) -> str:
+        return f"""
+        /* ---- Card detail row ---- */
+        QLabel#cardDetailKey {{
+            color: {c.text_secondary};
+            font-size: {m.font_size_xs};
+            font-weight: {m.font_weight_medium};
+            min-width: 100px;
+            max-width: 140px;
+        }}
+        QLabel#cardDetailValue {{
+            color: {c.text_primary};
+            font-size: {m.font_size_sm};
+            font-weight: {m.font_weight_semibold};
+        }}"""
+
     # -- Model provider / MCP server dialog --
 
     @staticmethod
@@ -1548,6 +1568,12 @@ class Theme:
         }}
         QFrame#skillCard:hover {{
             border: 1px solid {c.accent};
+        }}
+        QFrame#skillCard[skill_enabled="true"] {{
+            border-left: 3px solid {c.status_ok};
+        }}
+        QFrame#skillCard[skill_enabled="false"] {{
+            border-left: 3px solid {c.border};
         }}"""
 
     # -- Chat skill/provider selectors --

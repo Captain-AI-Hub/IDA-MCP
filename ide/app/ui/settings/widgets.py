@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import re
-from PySide6.QtCore import QEvent, Qt
-from PySide6.QtWidgets import QComboBox, QDoubleSpinBox, QLineEdit, QSpinBox
+from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtGui import QMouseEvent, QPainter, QColor, QPalette
+from PySide6.QtWidgets import QApplication, QComboBox, QDoubleSpinBox, QLineEdit, QSpinBox, QWidget
 
 
 class NoWheelSpinBox(QSpinBox):
@@ -97,3 +98,70 @@ class ContextTokenEdit(QLineEdit):
     def keyPressEvent(self, event):  # type: ignore[override]
         # Allow free typing; validation happens silently.
         super().keyPressEvent(event)
+
+
+# -- Circular slide toggle switch --
+
+class ToggleSwitch(QWidget):
+    """A compact circular slide toggle (iOS-style switch).
+
+    Emits ``toggled(bool)`` when clicked.  Visuals adapt to the
+    application palette so light/dark themes are handled automatically.
+    """
+
+    toggled = Signal(bool)
+
+    _WIDTH = 36
+    _HEIGHT = 20
+    _HANDLE_SIZE = 16
+    _PADDING = 2
+
+    def __init__(self, parent: QWidget | None = None, checked: bool = False) -> None:
+        super().__init__(parent)
+        self._checked = checked
+        self.setFixedSize(self._WIDTH, self._HEIGHT)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def isChecked(self) -> bool:
+        return self._checked
+
+    def setChecked(self, checked: bool) -> None:
+        if self._checked == checked:
+            return
+        self._checked = checked
+        self.update()
+        self.toggled.emit(checked)
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:  # type: ignore[override]
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.setChecked(not self._checked)
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+
+    def paintEvent(self, event) -> None:  # type: ignore[override]
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        palette = QApplication.instance().palette() if QApplication.instance() else self.palette()
+
+        # Background colour
+        if self._checked:
+            bg_color = palette.color(QPalette.ColorRole.Highlight)
+        else:
+            bg_color = QColor("#9ca3af") if self.isEnabled() else QColor("#d1d5db")
+
+        painter.setBrush(bg_color)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRoundedRect(self.rect(), self._HEIGHT // 2, self._HEIGHT // 2)
+
+        # Handle (white circle)
+        if self._checked:
+            x = self._WIDTH - self._HANDLE_SIZE - self._PADDING
+        else:
+            x = self._PADDING
+        y = (self._HEIGHT - self._HANDLE_SIZE) // 2
+        painter.setBrush(QColor("#ffffff"))
+        painter.drawEllipse(x, y, self._HANDLE_SIZE, self._HANDLE_SIZE)
+
+        painter.end()

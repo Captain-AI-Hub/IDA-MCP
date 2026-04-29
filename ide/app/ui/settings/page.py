@@ -43,6 +43,7 @@ from app.ui.settings.dialogs import McpServerDialog, McpServerDetailDialog, Mode
 from app.ui.settings.widgets import (
     NoWheelComboBox,
     NoWheelSpinBox,
+    ToggleSwitch,
     format_token_text,
 )
 from app.ui.settings.workers import (
@@ -585,12 +586,9 @@ class SettingsPage(QWidget):
         self.model_providers_changed.emit()
 
     def _toggle_provider_enabled(
-        self, provider_id: int, state: int, card: QFrame
+        self, provider_id: int, enabled: bool, card: QFrame
     ) -> None:
         """Toggle provider enabled state and persist immediately."""
-        from PySide6.QtCore import Qt as QtCoreQt
-
-        enabled = state == QtCoreQt.CheckState.Checked.value
         self._settings_service.update_model_provider(
             provider_id, enabled=enabled
         )
@@ -598,6 +596,7 @@ class SettingsPage(QWidget):
         card.setProperty("provider_enabled", "true" if enabled else "false")
         card.style().unpolish(card)
         card.style().polish(card)
+        self.model_providers_changed.emit()
 
     def _refresh_model_cards(self) -> None:
         # Remove existing cards (keep the trailing stretch)
@@ -652,15 +651,14 @@ class SettingsPage(QWidget):
         name_label.setFont(name_font)
         header_layout.addWidget(name_label)
 
-        enabled_check = QCheckBox(self._t("settings.skills.enabled"))
-        enabled_check.setChecked(provider.enabled)
-        enabled_check.setCursor(Qt.CursorShape.PointingHandCursor)
-        enabled_check.stateChanged.connect(
-            lambda state, pid=provider.id, c=card: self._toggle_provider_enabled(pid, state, c)
-        )
-        header_layout.addWidget(enabled_check)
-
         header_layout.addStretch(1)
+
+        toggle = ToggleSwitch(checked=provider.enabled)
+        toggle.setToolTip(self._t("settings.skills.enabled"))
+        toggle.toggled.connect(
+            lambda checked, pid=provider.id, c=card: self._toggle_provider_enabled(pid, checked, c)
+        )
+        header_layout.addWidget(toggle)
 
         edit_btn = QPushButton(self._t("settings.model.dialog.edit"))
         edit_btn.setObjectName("modelCardEditButton")
@@ -690,65 +688,60 @@ class SettingsPage(QWidget):
 
         # --- Details row ---
         details = QWidget()
-        details_layout = QHBoxLayout(details)
+        details_layout = QVBoxLayout(details)
         details_layout.setContentsMargins(0, 4, 0, 0)
-        details_layout.setSpacing(24)
+        details_layout.setSpacing(4)
 
-        # Model ID + API Mode
-        left = QWidget()
-        left_layout = QVBoxLayout(left)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(2)
-        left_layout.addWidget(self._detail_label(
-            self._t("settings.field.model_id"), provider.model_name or "—"
-        ))
-        left_layout.addWidget(self._detail_label(
-            self._t("settings.field.model_api_mode"),
-            api_mode_labels.get(provider.api_mode, provider.api_mode),
-        ))
-        details_layout.addWidget(left, 1)
-
-        # Base URL + Top-P / Temperature
-        mid = QWidget()
-        mid_layout = QVBoxLayout(mid)
-        mid_layout.setContentsMargins(0, 0, 0, 0)
-        mid_layout.setSpacing(2)
         base_url_display = provider.base_url or "—"
-        if len(base_url_display) > 40:
-            base_url_display = base_url_display[:37] + "..."
-        mid_layout.addWidget(self._detail_label(
-            self._t("settings.field.model_base_url"), base_url_display
-        ))
-        mid_layout.addWidget(self._detail_label(
-            f"{self._t('settings.field.model_top_p')} / {self._t('settings.field.model_temperature')}",
-            f"{provider.top_p:.2f} / {provider.temperature:.1f}",
-        ))
+        if len(base_url_display) > 50:
+            base_url_display = base_url_display[:47] + "..."
         context_display = (
             self._t("settings.model.context.unlimited")
             if provider.max_context_tokens <= 0
             else format_token_text(provider.max_context_tokens)
         )
-        mid_layout.addWidget(self._detail_label(
+
+        details_layout.addWidget(self._detail_label(
+            self._t("settings.field.model_id"), provider.model_name or "—"
+        ))
+        details_layout.addWidget(self._detail_label(
+            self._t("settings.field.model_api_mode"),
+            api_mode_labels.get(provider.api_mode, provider.api_mode),
+        ))
+        details_layout.addWidget(self._detail_label(
+            self._t("settings.field.model_base_url"), base_url_display
+        ))
+        details_layout.addWidget(self._detail_label(
+            f"{self._t('settings.field.model_top_p')} / {self._t('settings.field.model_temperature')}",
+            f"{provider.top_p:.2f} / {provider.temperature:.1f}",
+        ))
+        details_layout.addWidget(self._detail_label(
             self._t("settings.field.model_context"), context_display
         ))
-        details_layout.addWidget(mid, 1)
 
         card_layout.addWidget(details)
 
         return card
 
     def _detail_label(self, key: str, value: str) -> QWidget:
-        """Build a key:value detail row for a card."""
+        """Build a compact key:value detail row for a card."""
         w = QWidget()
-        layout = QVBoxLayout(w)
+        layout = QHBoxLayout(w)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(1)
+        layout.setSpacing(8)
+
         key_label = QLabel(key)
-        key_label.setObjectName("settingsFieldDescription")
+        key_label.setObjectName("cardDetailKey")
+        key_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
         val_label = QLabel(value)
-        val_label.setObjectName("settingsFieldLabel")
+        val_label.setObjectName("cardDetailValue")
+        val_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        val_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        val_label.setWordWrap(False)
+
         layout.addWidget(key_label)
-        layout.addWidget(val_label)
+        layout.addWidget(val_label, 1)
         return w
 
     # ------------------------------------------------------------------
@@ -820,9 +813,11 @@ class SettingsPage(QWidget):
         self._settings_service.remove_mcp_server(server_id)
         self._refresh_mcp_servers()
 
-    def _toggle_mcp_server_enabled(self, server_id: int, enabled: bool) -> None:
+    def _toggle_mcp_server_enabled(self, server_id: int, enabled: bool, card: QFrame) -> None:
         self._settings_service.update_mcp_server(server_id, enabled=enabled)
-        self._refresh_mcp_servers()
+        card.setProperty("server_enabled", "true" if enabled else "false")
+        card.style().unpolish(card)
+        card.style().polish(card)
 
     def _edit_mcp_server(self, server_id: int) -> None:
         servers = self._settings_service.get_mcp_servers()
@@ -881,25 +876,14 @@ class SettingsPage(QWidget):
         transport_label.setObjectName("cardBadgeTransport")
         header_layout.addWidget(transport_label)
 
-        enabled_label = QLabel(
-            "● " + (self._t("settings.bool.yes") if server.enabled else self._t("settings.bool.no"))
-        )
-        enabled_label.setObjectName("cardBadgeEnabled" if server.enabled else "cardBadgeDisabled")
-        header_layout.addWidget(enabled_label)
-
         header_layout.addStretch(1)
 
-        toggle_btn = QPushButton(
-            self._t("settings.bool.no") if server.enabled else self._t("settings.bool.yes")
+        toggle = ToggleSwitch(checked=server.enabled)
+        toggle.setToolTip(self._t("settings.skills.enabled"))
+        toggle.toggled.connect(
+            lambda checked, sid=server.id, c=card: self._toggle_mcp_server_enabled(sid, checked, c)
         )
-        toggle_btn.setObjectName("cardToggleButton")
-        toggle_btn.setProperty("active", "true" if server.enabled else "false")
-        toggle_btn.setFixedHeight(28)
-        toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        toggle_btn.clicked.connect(
-            lambda checked, sid=server.id, en=not server.enabled: self._toggle_mcp_server_enabled(sid, en)
-        )
-        header_layout.addWidget(toggle_btn)
+        header_layout.addWidget(toggle)
 
         edit_btn = QPushButton(self._t("settings.mcp.dialog.edit"))
         edit_btn.setObjectName("modelCardEditButton")
@@ -929,24 +913,11 @@ class SettingsPage(QWidget):
 
         # --- Details row ---
         details = QWidget()
-        details_layout = QHBoxLayout(details)
+        details_layout = QVBoxLayout(details)
         details_layout.setContentsMargins(0, 4, 0, 0)
-        details_layout.setSpacing(24)
+        details_layout.setSpacing(4)
 
         if server.transport == "stdio":
-            left = QWidget()
-            left_layout = QVBoxLayout(left)
-            left_layout.setContentsMargins(0, 0, 0, 0)
-            left_layout.setSpacing(2)
-            left_layout.addWidget(self._detail_label(
-                self._t("settings.field.mcp_command"), server.command or "—"
-            ))
-            details_layout.addWidget(left, 1)
-
-            mid = QWidget()
-            mid_layout = QVBoxLayout(mid)
-            mid_layout.setContentsMargins(0, 0, 0, 0)
-            mid_layout.setSpacing(2)
             try:
                 args_list = json.loads(server.args) if server.args else []
             except (json.JSONDecodeError, TypeError):
@@ -954,44 +925,31 @@ class SettingsPage(QWidget):
             args_display = " ".join(args_list) if args_list else "—"
             if len(args_display) > 50:
                 args_display = args_display[:47] + "..."
-            mid_layout.addWidget(self._detail_label(
+            cwd_display = server.cwd or "—"
+            if len(cwd_display) > 50:
+                cwd_display = cwd_display[:47] + "..."
+
+            details_layout.addWidget(self._detail_label(
+                self._t("settings.field.mcp_command"), server.command or "—"
+            ))
+            details_layout.addWidget(self._detail_label(
                 self._t("settings.field.mcp_args"), args_display
             ))
-            details_layout.addWidget(mid, 1)
-
-            right = QWidget()
-            right_layout = QVBoxLayout(right)
-            right_layout.setContentsMargins(0, 0, 0, 0)
-            right_layout.setSpacing(2)
-            cwd_display = server.cwd or "—"
-            if len(cwd_display) > 40:
-                cwd_display = cwd_display[:37] + "..."
-            right_layout.addWidget(self._detail_label(
+            details_layout.addWidget(self._detail_label(
                 self._t("settings.field.mcp_cwd"), cwd_display
             ))
-            details_layout.addWidget(right, 1)
         else:
-            left = QWidget()
-            left_layout = QVBoxLayout(left)
-            left_layout.setContentsMargins(0, 0, 0, 0)
-            left_layout.setSpacing(2)
             url_display = server.url or "—"
-            if len(url_display) > 60:
-                url_display = url_display[:57] + "..."
-            left_layout.addWidget(self._detail_label(
+            if len(url_display) > 50:
+                url_display = url_display[:47] + "..."
+
+            details_layout.addWidget(self._detail_label(
                 self._t("settings.field.mcp_url"), url_display
             ))
-            details_layout.addWidget(left, 2)
-
-            right = QWidget()
-            right_layout = QVBoxLayout(right)
-            right_layout.setContentsMargins(0, 0, 0, 0)
-            right_layout.setSpacing(2)
-            right_layout.addWidget(self._detail_label(
+            details_layout.addWidget(self._detail_label(
                 self._t("settings.field.mcp_timeout"),
                 f"{server.timeout:.1f} s",
             ))
-            details_layout.addWidget(right, 1)
 
         card_layout.addWidget(details)
 
@@ -1168,14 +1126,17 @@ class SettingsPage(QWidget):
         self._settings_service.remove_skill(skill_id)
         self._refresh_skills()
 
-    def _toggle_skill_enabled(self, skill_id: int, enabled: bool) -> None:
+    def _toggle_skill_enabled(self, skill_id: int, enabled: bool, card: QFrame) -> None:
         self._settings_service.update_skill(skill_id, enabled=enabled)
-        self._refresh_skills()
+        card.setProperty("skill_enabled", "true" if enabled else "false")
+        card.style().unpolish(card)
+        card.style().polish(card)
 
     def _build_skill_card(self, skill) -> QFrame:
         """Build a single skill card widget."""
         card = QFrame()
         card.setObjectName("skillCard")
+        card.setProperty("skill_enabled", "true" if skill.enabled else "false")
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(16, 12, 16, 12)
         card_layout.setSpacing(6)
@@ -1198,25 +1159,14 @@ class SettingsPage(QWidget):
             version_label.setObjectName("cardBadgeVersion")
             header_layout.addWidget(version_label)
 
-        enabled_label = QLabel(
-            "● " + (self._t("settings.bool.yes") if skill.enabled else self._t("settings.bool.no"))
-        )
-        enabled_label.setObjectName("cardBadgeEnabled" if skill.enabled else "cardBadgeDisabled")
-        header_layout.addWidget(enabled_label)
-
         header_layout.addStretch(1)
 
-        toggle_btn = QPushButton(
-            self._t("settings.bool.no") if skill.enabled else self._t("settings.bool.yes")
+        toggle = ToggleSwitch(checked=skill.enabled)
+        toggle.setToolTip(self._t("settings.skills.enabled"))
+        toggle.toggled.connect(
+            lambda checked, sid=skill.id, c=card: self._toggle_skill_enabled(sid, checked, c)
         )
-        toggle_btn.setObjectName("cardToggleButton")
-        toggle_btn.setProperty("active", "true" if skill.enabled else "false")
-        toggle_btn.setFixedHeight(28)
-        toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        toggle_btn.clicked.connect(
-            lambda checked, sid=skill.id, en=not skill.enabled: self._toggle_skill_enabled(sid, en)
-        )
-        header_layout.addWidget(toggle_btn)
+        header_layout.addWidget(toggle)
 
         del_btn = QPushButton(self._t("settings.skills.remove"))
         del_btn.setObjectName("dangerButton")
@@ -1234,36 +1184,26 @@ class SettingsPage(QWidget):
         card_layout.addWidget(separator)
 
         details = QWidget()
-        details_layout = QHBoxLayout(details)
+        details_layout = QVBoxLayout(details)
         details_layout.setContentsMargins(0, 4, 0, 0)
-        details_layout.setSpacing(24)
+        details_layout.setSpacing(4)
 
-        left = QWidget()
-        left_layout = QVBoxLayout(left)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(2)
         desc_display = skill.description or "—"
         if len(desc_display) > 80:
             desc_display = desc_display[:77] + "..."
-        left_layout.addWidget(
+        installed_display = skill.installed_at[:10] if skill.installed_at else "—"
+
+        details_layout.addWidget(
             self._detail_label(self._t("settings.skills.description"), desc_display)
         )
-        details_layout.addWidget(left, 2)
-
-        right = QWidget()
-        right_layout = QVBoxLayout(right)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(2)
-        right_layout.addWidget(
+        details_layout.addWidget(
             self._detail_label(self._t("settings.skills.version"), skill.version or "—")
         )
-        installed_display = skill.installed_at[:10] if skill.installed_at else "—"
-        right_layout.addWidget(
+        details_layout.addWidget(
             self._detail_label(
                 self._t("settings.skills.installed_at"), installed_display
             )
         )
-        details_layout.addWidget(right, 1)
 
         card_layout.addWidget(details)
 
