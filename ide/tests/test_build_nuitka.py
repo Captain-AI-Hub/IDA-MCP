@@ -30,7 +30,7 @@ def test_build_command_platform_compiler_flags() -> None:
     command = build_command()
 
     if _IS_WINDOWS:
-        assert "--msvc=latest" in command
+        assert "--clang" in command
         assert "--windows-console-mode=disable" in command
     elif _IS_MACOS:
         assert "--msvc=latest" not in command

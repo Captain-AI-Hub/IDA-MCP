@@ -113,7 +113,7 @@ def build_command(
 
     # --- platform-specific compiler flags ----------------------------------
     if _IS_WINDOWS:
-        command.append("--msvc=latest")
+        command.append("--clang")
         command.append("--windows-console-mode=disable")
     elif _IS_MACOS:
         command.append("--macos-disable-console")
