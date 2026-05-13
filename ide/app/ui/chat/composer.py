@@ -10,12 +10,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QEvent, Qt, Signal
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QPushButton,
-    QStyle,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -94,16 +93,12 @@ class Composer(QWidget):
         self._send_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self._send_button.clicked.connect(self._on_send)
 
-        # Load send / stop icons tinted to the accent text colour
+        # Load send icon; draw stop icon as a filled circle with white X
         _send_svg = (
             Path(__file__).resolve().parents[3]
             / "resources" / "icons" / "send.svg"
         )
-        _stop_svg = (
-            Path(__file__).resolve().parents[3]
-            / "resources" / "icons" / "stop.svg"
-        )
-        if _send_svg.exists() and _stop_svg.exists():
+        if _send_svg.exists():
             from app.ui.theme import current_palette
             from app.ui.icons import tint_svg
 
@@ -111,9 +106,7 @@ class Composer(QWidget):
             self._icon_send = tint_svg(
                 str(_send_svg), _palette.accent_text, size=16
             )
-            self._icon_stop = tint_svg(
-                str(_stop_svg), _palette.accent_text, size=16
-            )
+            self._icon_stop = self._create_stop_icon(16, QColor(_palette.status_error))
             self._send_button.setIcon(self._icon_send)
 
         self._bottom_layout.addWidget(self._send_button)
@@ -128,6 +121,32 @@ class Composer(QWidget):
 
     def _t(self, key: str, **kwargs: object) -> str:
         return self._i18n.t(key, **kwargs)
+
+    @staticmethod
+    def _create_stop_icon(size: int, bg_color: QColor) -> QIcon:
+        """Draw a circular icon with a white X in the centre."""
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # Filled circle
+        painter.setBrush(bg_color)
+        painter.setPen(Qt.NoPen)
+        painter.drawEllipse(0, 0, size, size)
+
+        # White X
+        pen = QPen(QColor("white"))
+        pen.setWidth(max(1, size // 5))
+        pen.setCapStyle(Qt.RoundCap)
+        painter.setPen(pen)
+
+        padding = size // 4
+        painter.drawLine(padding, padding, size - padding, size - padding)
+        painter.drawLine(size - padding, padding, padding, size - padding)
+
+        painter.end()
+        return QIcon(pixmap)
 
     # ------------------------------------------------------------------
     # Selector management
@@ -178,14 +197,6 @@ class Composer(QWidget):
         self._input.setPlaceholderText(self._t("chat.placeholder"))
         self._clear_button.setToolTip(self._t("chat.clear"))
 
-    def set_enabled(self, enabled: bool) -> None:
-        """Enable or disable the text input.
-
-        The send/stop button is always kept interactive — ``set_running``
-        manages its visual state independently.
-        """
-        self._input.setEnabled(enabled)
-
     def set_running(self, running: bool) -> None:
         """Toggle between send mode and stop mode."""
         self._is_running = running
@@ -205,6 +216,3 @@ class Composer(QWidget):
 
     def clear_input(self) -> None:
         self._input.clear()
-
-    def set_placeholder(self, text: str) -> None:
-        self._input.setPlaceholderText(text)

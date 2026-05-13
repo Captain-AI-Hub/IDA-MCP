@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
 from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -73,7 +72,6 @@ class HexViewWidget(QWidget):
         super().__init__(parent)
         self._file_path: str | None = None
         self._original_data: bytes = b""
-        self._readonly: bool = True
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)

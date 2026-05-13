@@ -65,10 +65,6 @@ class ProviderSelector(QWidget):
         self._rebuild_menu()
         self._update_text()
 
-    @property
-    def active_provider_id(self) -> int | None:
-        return self._active_id
-
     def _rebuild_menu(self) -> None:
         self._menu.clear()
         for pid, name, _mode in self._models:

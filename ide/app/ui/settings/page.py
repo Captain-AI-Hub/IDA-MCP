@@ -39,6 +39,7 @@ from app.presenters.settings_presenter import (
     snapshot_to_form_state,
 )
 from app.services.settings_service import SettingsService
+from app.services.skill_service import SkillService
 from app.ui.settings.dialogs import McpServerDialog, McpServerDetailDialog, ModelProviderDialog
 from app.ui.settings.widgets import (
     NoWheelComboBox,
@@ -68,6 +69,7 @@ class SettingsPage(QWidget):
     ) -> None:
         super().__init__()
         self._settings_service = settings_service or SettingsService()
+        self._skill_service = SkillService(self._settings_service)
 
         initial_snapshot = self._settings_service.load()
         self._language = normalize_language(initial_snapshot.ide_config.language)
@@ -106,7 +108,13 @@ class SettingsPage(QWidget):
         self._install_plugin_dir = QLineEdit()
         self._install_plugin_dir.setReadOnly(True)
 
+        self._ida_dir = QLineEdit()
+        self._ida_dir.setPlaceholderText(self._t("settings.field.ida_dir.placeholder"))
+        self._detect_ida_btn = QPushButton(self._t("settings.button.detect"))
+        self._detect_ida_btn.clicked.connect(self._on_detect_ida)
+
         self._plugin_dir = QLineEdit()
+        self._plugin_dir.setReadOnly(True)
         self._language_combo = NoWheelComboBox()
         self._theme_combo = NoWheelComboBox()
         self._ide_request_timeout = NoWheelSpinBox()
@@ -268,9 +276,14 @@ class SettingsPage(QWidget):
                 self._t("settings.group.global_paths.desc"),
                 [
                     self._build_field_row(
+                        self._t("settings.field.ida_dir"),
+                        self._t("settings.field.ida_dir.desc"),
+                        self._ida_dir_field(),
+                    ),
+                    self._build_field_row(
                         self._t("settings.field.plugin_dir"),
                         self._t("settings.field.plugin_dir.desc"),
-                        self._path_field(self._plugin_dir, self._browse_directory),
+                        self._plugin_dir,
                     ),
                 ],
             )
@@ -1040,70 +1053,13 @@ class SettingsPage(QWidget):
         if not selected:
             return
 
-        import shutil
-        import tempfile
-        import zipfile
-        from datetime import datetime, timezone
-        from pathlib import Path
-
-        zip_path = Path(selected)
-        file_name = zip_path.name
-
         try:
-            with tempfile.TemporaryDirectory() as tmp_dir:
-                tmp = Path(tmp_dir)
-                with zipfile.ZipFile(zip_path, "r") as zf:
-                    zf.extractall(tmp)
-
-                manifest = None
-                skill_root = tmp
-                for candidate in (tmp / "skill.json", tmp / "package.json"):
-                    if candidate.exists():
-                        manifest = json.loads(candidate.read_text(encoding="utf-8"))
-                        break
-
-                if manifest is None:
-                    for subdir in tmp.iterdir():
-                        if subdir.is_dir():
-                            for candidate in (subdir / "skill.json", subdir / "package.json"):
-                                if candidate.exists():
-                                    manifest = json.loads(candidate.read_text(encoding="utf-8"))
-                                    skill_root = subdir
-                                    break
-                            if manifest:
-                                break
-
-                skill_name = manifest.get("name", "") if manifest else zip_path.stem
-                if not skill_name:
-                    skill_name = zip_path.stem
-                skill_description = manifest.get("description", "") if manifest else ""
-                skill_version = manifest.get("version", "") if manifest else ""
-
-                safe_name = "".join(
-                    c if c.isalnum() or c in ("-", "_") else "_" for c in skill_name
-                )
-                install_dir_name = safe_name
-
-                skills_dir = self._settings_service.get_skills_dir()
-                dest = skills_dir / install_dir_name
-                if dest.exists():
-                    shutil.rmtree(dest)
-                shutil.copytree(skill_root, dest)
-
-            now = datetime.now(timezone.utc).isoformat()
-            self._settings_service.add_skill(
-                name=skill_name,
-                description=skill_description,
-                version=skill_version,
-                file_path=file_name,
-                install_dir=install_dir_name,
-                installed_at=now,
-            )
+            skill_metadata = self._skill_service.import_skill_zip(selected)
             self._refresh_skills()
             QMessageBox.information(
                 self,
                 self._t("settings.dialog.settings"),
-                self._t("settings.skills.import_success", name=skill_name),
+                self._t("settings.skills.import_success", name=skill_metadata["name"]),
             )
         except Exception as exc:
             QMessageBox.warning(
@@ -1114,8 +1070,6 @@ class SettingsPage(QWidget):
 
     def _delete_skill(self, skill_id: int) -> None:
         """Remove a skill and delete its installed files."""
-        import shutil
-
         skills = self._settings_service.get_skills()
         skill = next((s for s in skills if s.id == skill_id), None)
         if skill is None:
@@ -1130,16 +1084,7 @@ class SettingsPage(QWidget):
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        if skill.install_dir:
-            try:
-                skills_dir = self._settings_service.get_skills_dir()
-                dest = skills_dir / skill.install_dir
-                if dest.exists():
-                    shutil.rmtree(dest)
-            except Exception:
-                pass
-
-        self._settings_service.remove_skill(skill_id)
+        self._skill_service.delete_skill(skill_id, skill.install_dir)
         self._refresh_skills()
 
     def _toggle_skill_enabled(self, skill_id: int, enabled: bool, card: QFrame) -> None:
@@ -1347,26 +1292,14 @@ class SettingsPage(QWidget):
             me=model_edit,
             ts=temp_spin,
         ) -> None:
-            allow_text = ae.text().strip()
-            allow_json_val = (
-                json.dumps([t.strip() for t in allow_text.split(",") if t.strip()])
-                if allow_text else None
-            )
-            deny_text = de.text().strip()
-            deny_json_val = (
-                json.dumps([t.strip() for t in deny_text.split(",") if t.strip()])
-                if deny_text else None
-            )
-            model_val = me.text().strip() or ""
-            temp_val = ts.value() if ts.value() > 0 else None
             try:
-                self._settings_service.update_skill(
+                self._skill_service.save_skill_advanced(
                     sid,
                     system_prompt_template=pe.toPlainText(),
-                    tool_allowlist_json=allow_json_val,
-                    tool_denylist_json=deny_json_val,
-                    model_override=model_val,
-                    temperature_override=temp_val,
+                    tool_allowlist=ae.text(),
+                    tool_denylist=de.text(),
+                    model_override=me.text(),
+                    temperature_override=ts.value(),
                 )
             except Exception as exc:
                 QMessageBox.critical(
@@ -1406,6 +1339,7 @@ class SettingsPage(QWidget):
         self._refresh_language_combo()
 
         form_state = snapshot_to_form_state(snapshot)
+        self._ida_dir.setText(form_state.ida_dir)
         self._plugin_dir.setText(form_state.plugin_dir)
         self._ide_request_timeout.setValue(form_state.ide_request_timeout)
         self._install_python_path.setText(effective_install_python_path(snapshot))
@@ -1660,6 +1594,68 @@ class SettingsPage(QWidget):
         )
         if selected:
             widget.setText(os.path.normpath(selected))
+
+    def _ida_dir_field(self) -> QWidget:
+        """Return a row widget with IDA directory edit, browse, and detect buttons."""
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        browse_btn = QPushButton(self._t("settings.button.browse"))
+        browse_btn.clicked.connect(lambda: self._browse_directory(self._ida_dir))
+
+        layout.addWidget(self._ida_dir, 1)
+        layout.addWidget(browse_btn)
+        layout.addWidget(self._detect_ida_btn)
+        return container
+
+    def _on_detect_ida(self) -> None:
+        """Detect IDA executable and IDA Python from the selected directory."""
+        ida_dir = self._ida_dir.text().strip()
+        if not ida_dir:
+            QMessageBox.warning(
+                self,
+                self._t("settings.dialog.check"),
+                self._t("settings.detect.ida_dir_empty"),
+            )
+            return
+
+        self._detect_ida_btn.setEnabled(False)
+        self._detect_ida_btn.setText(self._t("settings.button.detecting"))
+
+        try:
+            ida_exe = self._settings_service.detect_ida_executable(ida_dir)
+            ida_python = self._settings_service.detect_ida_python(ida_dir)
+
+            if ida_exe:
+                self._ida_path.setText(ida_exe)
+            if ida_python:
+                self._ida_python.setText(ida_python)
+
+            # Derive and display plugin_dir
+            from supervisor.models import derive_plugin_dir
+            derived = derive_plugin_dir(ida_dir)
+            self._plugin_dir.setText(derived)
+
+            parts: list[str] = []
+            if ida_exe:
+                parts.append(self._t("settings.detect.ida_executable_found").format(path=ida_exe))
+            else:
+                parts.append(self._t("settings.detect.ida_executable_not_found"))
+            if ida_python:
+                parts.append(self._t("settings.detect.ida_python_found").format(path=ida_python))
+            else:
+                parts.append(self._t("settings.detect.ida_python_not_found"))
+
+            QMessageBox.information(
+                self,
+                self._t("settings.dialog.check"),
+                "\n".join(parts),
+            )
+        finally:
+            self._detect_ida_btn.setEnabled(True)
+            self._detect_ida_btn.setText(self._t("settings.button.detect"))
 
     def _bool_text(self, value: bool) -> str:
         return self._t("settings.bool.yes") if value else self._t("settings.bool.no")

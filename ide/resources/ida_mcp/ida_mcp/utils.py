@@ -16,7 +16,7 @@ import os
 import re
 import string
 import fnmatch
-from typing import Any, List, Dict, Optional, Tuple, Union, TypedDict
+from typing import Any, List, Dict, Optional, Union, TypedDict
 
 # ---------------------------------------------------------------------------
 # Platform detection — resolved once at import time
@@ -167,21 +167,6 @@ def normalize_list_input(input_value: Union[int, str, List[Any]]) -> List[str]:
         return [str(input_value)]
 
 
-def parse_addresses(
-    input_value: Union[str, List[Any]],
-) -> List[Tuple[str, ParseResult]]:
-    """Parse multiple addresses.
-
-    Args:
-        input_value: address list or comma-separated string
-
-    Returns:
-        [(original input, ParseResult), ...]
-    """
-    items = normalize_list_input(input_value)
-    return [(item, parse_address(item)) for item in items]
-
-
 def paginate(
     items: List[Any], offset: int = 0, count: int = 100, max_count: int = 1000
 ) -> Page:
@@ -264,55 +249,6 @@ def is_valid_c_identifier(name: str) -> bool:
     if not name:
         return False
     return bool(re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name))
-
-
-def truncate_string(s: str, max_len: int = 512, suffix: str = "...") -> str:
-    """Truncate a string.
-
-    Args:
-        s: original string
-        max_len: maximum length
-        suffix: truncation suffix
-
-    Returns:
-        truncated string
-    """
-    if len(s) <= max_len:
-        return s
-    return s[: max_len - len(suffix)] + suffix
-
-
-def format_hex(value: int, bits: int = 0) -> str:
-    """Format as a hexadecimal string.
-
-    Args:
-        value: numeric value
-        bits: bit width (determines zero-pad width, 0=auto)
-
-    Returns:
-        string in "0x..." format
-    """
-    if bits > 0:
-        width = bits // 4
-        return f"0x{value:0{width}X}"
-    else:
-        return f"0x{value:X}"
-
-
-def safe_int(value: Any, default: int = 0) -> int:
-    """Safely convert to integer.
-
-    Args:
-        value: value to convert
-        default: fallback value on conversion failure
-
-    Returns:
-        integer value
-    """
-    try:
-        return int(value)
-    except (ValueError, TypeError):
-        return default
 
 
 def normalize_arch(raw: Optional[str], bits: int) -> Optional[str]:

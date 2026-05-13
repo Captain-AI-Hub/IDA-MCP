@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import argparse
 import platform
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -214,7 +213,7 @@ def main() -> int:
 
     # Pretty-print the command for review
     print("Resolved Nuitka command:\n")
-    for i, token in enumerate(command):
+    for token in command:
         # Align flag tokens for readability
         if token.startswith("--"):
             print(f"  {token}")

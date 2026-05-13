@@ -14,7 +14,7 @@ from typing import Any
 from shared.database import DatabaseStore
 from shared.paths import ensure_directory, get_ida_mcp_resources_dir
 
-from supervisor.models import ConfigStoreInfo, IdaMcpConfig
+from shared.models import ConfigStoreInfo, IdaMcpConfig
 
 
 _ASSIGNMENT_RE = re.compile(

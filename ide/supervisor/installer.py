@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import json
 import re
 import shutil
@@ -13,7 +12,7 @@ from pathlib import Path
 from shared.paths import get_ida_mcp_resources_dir
 
 from .models import EnvironmentProbe, InstallationActionResult, InstallationCheck
-from .platform_detector import PlatformDetector
+from .platform_detector import PlatformDetector, _probe_ida_python_via_idapyswitch
 
 
 def _read_requirements_file(path: Path) -> list[str]:
@@ -183,13 +182,34 @@ class EnvironmentInstaller:
     def find_ida_python_paths(self) -> list[str]:
         return self._detector.find_ida_python_paths()
 
+    def detect_ida_executable(self, ida_dir: str | Path) -> str | None:
+        """Detect the IDA executable inside an IDA installation directory."""
+        d = Path(ida_dir)
+        if not d.is_dir():
+            return None
+        names = ("ida.exe", "ida64.exe", "idat64.exe", "ida", "ida64")
+        for name in names:
+            exe = d / name
+            if exe.exists():
+                return str(exe)
+        return None
+
+    def detect_ida_python(self, ida_dir: str | Path) -> str | None:
+        """Detect the IDA Python interpreter via idapyswitch."""
+        d = Path(ida_dir)
+        if not d.is_dir():
+            return None
+        candidates = _probe_ida_python_via_idapyswitch(d)
+        return candidates[0] if candidates else None
+
     def check_installation(
         self,
         plugin_dir: str | Path | None = None,
         python_executable: str | Path | None = None,
         config_path: str | Path | None = None,
+        ida_dir: str | Path | None = None,
     ) -> InstallationCheck:
-        resolved_plugin_dir = self._resolve_plugin_dir(plugin_dir)
+        resolved_plugin_dir = self._resolve_plugin_dir(plugin_dir, ida_dir)
         resolved_python = self._resolve_python_executable(python_executable)
         resolved_config_path = self._resolve_config_path(
             config_path, resolved_plugin_dir
@@ -360,9 +380,17 @@ class EnvironmentInstaller:
             warnings=repair.warnings.copy(),
         )
 
-    def _resolve_plugin_dir(self, plugin_dir: str | Path | None) -> Path | None:
+    def _resolve_plugin_dir(
+        self,
+        plugin_dir: str | Path | None,
+        ida_dir: str | Path | None = None,
+    ) -> Path | None:
         if plugin_dir:
             return Path(plugin_dir)
+        if ida_dir:
+            candidate = Path(ida_dir) / "plugins"
+            if candidate.exists():
+                return candidate
         candidates = self.find_plugin_dirs()
         if candidates:
             return Path(candidates[0])

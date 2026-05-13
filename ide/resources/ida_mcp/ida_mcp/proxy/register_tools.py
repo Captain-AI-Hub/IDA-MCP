@@ -12,7 +12,8 @@ except ImportError:  # pragma: no cover
     Field = lambda **kwargs: None  # type: ignore
 
 from ..config import is_unsafe_enabled
-from ..rpc import ToolSpec, get_tool_specs, ensure_api_modules_loaded
+from ..api_loader import ensure_api_modules_loaded
+from ..rpc import ToolSpec, get_tool_specs
 from ._state import forward
 from . import lifecycle
 

@@ -14,7 +14,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QPoint, Qt, Signal
-from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMenu, QPushButton, QWidget
 
 if TYPE_CHECKING:
@@ -55,20 +54,11 @@ class SkillSelector(QWidget):
     def _t(self, key: str, **kwargs: object) -> str:
         return self._i18n.t(key, **kwargs)
 
-    def update_skills(self, skills: list[dict]) -> None:
-        """Update the skill list. Each dict: {id, name, description}."""
-        self._skills = list(skills)
-        self._rebuild_menu()
-
     def set_active(self, skill_id: int | None) -> None:
         """Set the active skill without emitting a signal."""
         self._current_id = skill_id
         self._update_text()
         self._rebuild_menu()
-
-    @property
-    def current_skill_id(self) -> int | None:
-        return self._current_id
 
     def _rebuild_menu(self) -> None:
         self._menu.clear()

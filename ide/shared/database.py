@@ -14,6 +14,7 @@ Tables:
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from dataclasses import fields as dc_fields
 from pathlib import Path
@@ -24,6 +25,8 @@ from shared.paths import ensure_directory, get_ide_user_config_root
 DATABASE_FILENAME = "ide.db"
 
 _SCHEMA_VERSION = 8
+
+_SIMPLE_TYPES = {"str": str, "int": int, "float": float, "bool": bool}
 
 
 def _coerce(value: str, target_type: type) -> Any:
@@ -200,8 +203,10 @@ class DatabaseStore:
                 # Handle forward refs like "str | None"
                 if "| None" in ann or "Optional[" in ann:
                     field_types[f.name] = str
+                elif ann in _SIMPLE_TYPES:
+                    field_types[f.name] = _SIMPLE_TYPES[ann]
                 else:
-                    field_types[f.name] = eval(ann)  # noqa: S307
+                    field_types[f.name] = str
             else:
                 import typing
                 origin = getattr(ann, "__origin__", None)
@@ -230,18 +235,6 @@ class DatabaseStore:
             )
             conn.commit()
 
-    def delete_kv(self, table: str, keys: list[str]) -> None:
-        """Delete specific keys from a config table."""
-        if not keys:
-            return
-        self._validate_table_name(table)
-        placeholders = ", ".join("?" for _ in keys)
-        with self._connect() as conn:
-            conn.execute(
-                f"DELETE FROM {table} WHERE key IN ({placeholders})", keys
-            )
-            conn.commit()
-
     # --- Row-based operations (for mcp_servers, skills) ---
 
     def load_rows(self, table: str) -> list[dict[str, Any]]:
@@ -255,6 +248,7 @@ class DatabaseStore:
     def insert_row(self, table: str, **values: Any) -> int:
         """Insert a row and return the new rowid."""
         self._validate_table_name(table)
+        self._validate_column_names(values)
         cols = ", ".join(values.keys())
         placeholders = ", ".join("?" for _ in values)
         serialized = [self._serialize(v) for v in values.values()]
@@ -269,6 +263,7 @@ class DatabaseStore:
     def update_row(self, table: str, row_id: int, **values: Any) -> bool:
         """Update a row by id. Returns True if a row was updated."""
         self._validate_table_name(table)
+        self._validate_column_names(values)
         set_clause = ", ".join(f"{k} = ?" for k in values)
         serialized = [self._serialize(v) for v in values.values()] + [row_id]
         with self._connect() as conn:
@@ -401,6 +396,8 @@ class DatabaseStore:
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self._db_path))
+        if self._db_path.exists():
+            self._db_path.chmod(0o600)
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
         return conn
@@ -429,7 +426,15 @@ class DatabaseStore:
         "workspace_history",
     })
 
+    _VALID_COLUMN_NAME = re.compile(r"^[a-z][a-z0-9_]*$")
+
     @classmethod
     def _validate_table_name(cls, table: str) -> None:
         if table not in cls._VALID_TABLES:
             raise ValueError(f"Invalid table name: {table!r}")
+
+    @classmethod
+    def _validate_column_names(cls, values: dict[str, Any]) -> None:
+        for column in values:
+            if not cls._VALID_COLUMN_NAME.fullmatch(column):
+                raise ValueError(f"Invalid column name: {column!r}")

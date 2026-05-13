@@ -20,12 +20,12 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QSplitter, QVBoxLayout, QWidget
 
 from app.chat.chat_service import ChatService
-from app.chat.models import ChatMessage, Conversation
 from app.chat.persistence import ChatPersistence
 from app.chat.skill_resolver import SkillResolver
 from app.ui.chat.composer import Composer
 from app.ui.chat.message_list import MessageList
 from app.ui.chat.provider_selector import ProviderSelector
+from app.services.supervisor_client import SupervisorClient
 from app.ui.chat.session_sidebar import SessionSidebar
 
 if TYPE_CHECKING:
@@ -42,12 +42,14 @@ class ChatPage(QWidget):
     def __init__(
         self,
         i18n: I18n,
+        supervisor_client: SupervisorClient | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("chatPage")
 
         self._i18n = i18n
+        self._supervisor_client: SupervisorClient | None = supervisor_client
         self._chat_service: ChatService | None = None
         self._persistence: ChatPersistence | None = None
         self._skill_resolver: SkillResolver | None = None
@@ -56,7 +58,6 @@ class ChatPage(QWidget):
         self._current_skill_id: int | None = None
         self._is_running: bool = False
         self._current_assistant_content: str = ""
-        self._manager = None
 
         self._build_ui()
 
@@ -217,10 +218,24 @@ class ChatPage(QWidget):
             self._current_provider_id = conv.provider_id
             self._provider_selector.update_providers(
                 self._provider_selector._models,
-                conv.provider_id,
+                self._current_provider_id,
             )
 
+        # Restore running state if the conversation is still active
+        if conv and conv.status == "running":
+            self._is_running = True
+            self._composer.set_running(True)
+            self._message_list.show_thinking()
+        else:
+            self._is_running = False
+            self._composer.set_running(False)
+            self._message_list.hide_thinking()
+
     def on_stream_event(self, event_dict: dict) -> None:
+        # Ignore events for other conversations to keep sessions isolated.
+        if event_dict.get("conversation_id") != self._current_conversation_id:
+            return
+
         event_type = event_dict.get("type", "")
         payload = event_dict.get("payload", {})
 
@@ -243,17 +258,12 @@ class ChatPage(QWidget):
     # Manager access
     # ------------------------------------------------------------------
 
-    def _get_manager(self):
-        if self._manager is None:
-            from supervisor.api import create_manager
-            self._manager = create_manager()
-        return self._manager
-
     def _get_current_model_name(self) -> str:
         """Return the display name of the currently selected provider."""
         try:
-            manager = self._get_manager()
-            for p in manager.get_model_providers():
+            if self._supervisor_client is None:
+                return ""
+            for p in self._supervisor_client.get_model_providers():
                 if p.id == self._current_provider_id and p.enabled:
                     return p.name or p.model_name or ""
         except Exception:
@@ -364,24 +374,24 @@ class ChatPage(QWidget):
     def _get_current_config(
         self,
     ) -> tuple[dict, list[dict], dict | None]:
-        try:
-            manager = self._get_manager()
-        except Exception:
-            logger.exception("Failed to access manager")
+        if self._supervisor_client is None:
             return {}, [], None
+        try:
+            providers = self._supervisor_client.get_model_providers()
+            provider_dict: dict = {}
 
-        providers = manager.get_model_providers()
-        provider_dict: dict = {}
+            # Use the user's explicit selection only — never auto-pick.
+            if self._current_provider_id is not None:
+                for p in providers:
+                    if p.id == self._current_provider_id and p.enabled:
+                        provider_dict = p.to_dict()
+                        break
 
-        # Use the user's explicit selection only — never auto-pick.
-        if self._current_provider_id is not None:
-            for p in providers:
-                if p.id == self._current_provider_id and p.enabled:
-                    provider_dict = p.to_dict()
-                    break
-
-        servers = manager.get_mcp_servers()
-        servers_list = [s.to_dict() for s in servers if s.enabled]
+            servers = self._supervisor_client.get_mcp_servers()
+            servers_list = [s.to_dict() for s in servers if s.enabled]
+        except Exception:
+            logger.exception("Failed to access supervisor client")
+            return {}, [], None
 
         # Resolve skill (auto: applies all enabled skills from DB)
         skill_dict = None
@@ -417,10 +427,12 @@ class ChatPage(QWidget):
         self._current_provider_id = provider_id
 
     def _refresh_models(self) -> None:
+        if self._supervisor_client is None:
+            self._provider_selector.update_providers([], None)
+            return
         try:
-            manager = self._get_manager()
             providers = [
-                p for p in manager.get_model_providers() if p.enabled
+                p for p in self._supervisor_client.get_model_providers() if p.enabled
             ]
 
             model_data = [

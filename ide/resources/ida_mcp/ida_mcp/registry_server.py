@@ -25,6 +25,21 @@ if __package__ in {None, ""}:
         get_request_timeout,
     )
     from ida_mcp.proxy._server import server as proxy_server
+    import ida_mcp.instance_registry as instance_registry
+    import ida_mcp.registry_routes as registry_routes
+    from ida_mcp.registry_routes import (
+        _call_handler,
+        _debug_get,
+        _debug_post,
+        _deregister_handler,
+        _ensure_proxy_handler,
+        _healthz,
+        _instances_handler,
+        _proxy_status_handler,
+        _register_handler,
+        _shutdown_handler,
+        _update_instance_handler,
+    )
 else:
     from .config import (
         get_http_bind_host,
@@ -34,6 +49,20 @@ else:
         get_request_timeout,
     )
     from .proxy._server import server as proxy_server
+    from . import instance_registry, registry_routes
+    from .registry_routes import (
+        _call_handler,
+        _debug_get,
+        _debug_post,
+        _deregister_handler,
+        _ensure_proxy_handler,
+        _healthz,
+        _instances_handler,
+        _proxy_status_handler,
+        _register_handler,
+        _shutdown_handler,
+        _update_instance_handler,
+    )
 
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -47,595 +76,6 @@ GATEWAY_CONNECT_HOST = get_http_connect_host()
 GATEWAY_PORT = get_http_port()
 MCP_PATH = get_http_path()
 REQUEST_TIMEOUT = get_request_timeout()
-
-DEBUG_ENABLED = False
-DEBUG_MAX_LEN = 1000
-
-_instances: List[Dict[str, Any]] = []
-_lock = threading.RLock()
-_current_instance_port: Optional[int] = None
-_call_locks: Dict[int, asyncio.Lock] = {}
-_proxy_ready = False
-_proxy_last_error: Optional[str] = None
-_gateway_started_at = time.time()
-_uvicorn_server = None
-
-INSTANCE_HEALTH_HEALTHY = "healthy"
-INSTANCE_HEALTH_DEGRADED = "degraded"
-INSTANCE_HEALTH_UNREACHABLE = "unreachable"
-INSTANCE_HEALTH_UNRESPONSIVE = "unresponsive"
-INSTANCE_HEALTH_ERROR = "error"
-INSTANCE_FAILURE_QUARANTINE_SECONDS = 60.0
-INSTANCE_FAILURE_THRESHOLD = 2
-MAIN_THREAD_STALE_SECONDS = 30.0
-PENDING_INSTANCE_TTL_SECONDS = 180.0  # Reap "starting" instances after 3 min
-
-# TTL cache for _reap_dead_instances to avoid N TCP probes on every request.
-_last_reap_ts: list[float] = [0.0]
-
-
-def _short(v: Any) -> str:
-    try:
-        s = json.dumps(v, ensure_ascii=False)
-    except Exception:
-        s = str(v)
-    if len(s) > DEBUG_MAX_LEN:
-        return s[:DEBUG_MAX_LEN] + "..."
-    return s
-
-
-def _debug_log(event: str, **fields: Any) -> None:  # pragma: no cover
-    if not DEBUG_ENABLED:
-        return
-    ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-    kv = " ".join(f"{k}={_short(v)}" for k, v in fields.items())
-    print(f"[{ts}] [gateway] {event} {kv}", flush=True)
-
-
-def set_debug(enable: bool) -> None:
-    global DEBUG_ENABLED
-    DEBUG_ENABLED = bool(enable)
-
-
-def _now() -> float:
-    return time.time()
-
-
-def _find_instance_index_by_pid(pid: Any) -> Optional[int]:
-    for idx, entry in enumerate(_instances):
-        if entry.get("pid") == pid:
-            return idx
-    return None
-
-
-def _probe_port_alive(port: int, timeout: float = 2.0) -> bool:
-    """Return True if a TCP connection to localhost:port succeeds."""
-    try:
-        with socket.create_connection((LOCALHOST, port), timeout=timeout):
-            return True
-    except (ConnectionRefusedError, OSError, socket.timeout):
-        return False
-
-
-def _reap_dead_instances() -> int:
-    """Remove instances whose port is no longer reachable.
-
-    Must be called while ``_lock`` is held.  Returns the number removed.
-
-    Results are cached for ``_REAP_TTL_SECONDS`` to avoid N TCP probes
-    on every request.
-    """
-    import time as _time
-
-    _REAP_TTL_SECONDS = 15.0
-    _SEEN_GRACE_SECONDS = 30.0  # skip TCP probe if instance was seen this recently
-    now = _time.monotonic()
-    if now - _last_reap_ts[0] < _REAP_TTL_SECONDS:
-        return 0
-
-    alive: List[Dict[str, Any]] = []
-    dead: List[Dict[str, Any]] = []
-    now_epoch = _time.time()
-    for entry in _instances:
-        # If the instance registered or sent a status update recently, it is
-        # alive by definition — no need for a TCP probe.  This prevents the
-        # gateway from evicting instances whose embedded MCP server briefly
-        # cannot accept connections (e.g. IDA main thread busy).
-        last_seen = entry.get("last_seen_at")
-        if last_seen and (now_epoch - float(last_seen)) < _SEEN_GRACE_SECONDS:
-            alive.append(entry)
-            continue
-        port = entry.get("port")
-        if isinstance(port, int) and _probe_port_alive(port):
-            alive.append(entry)
-        else:
-            dead.append(entry)
-    if dead:
-        _instances.clear()
-        _instances.extend(alive)
-        for d in dead:
-            _debug_log(
-                "REAP_DEAD",
-                pid=d.get("pid"),
-                port=d.get("port"),
-                state=d.get("effective_state") or d.get("health"),
-            )
-    _last_reap_ts[0] = now
-    return len(dead)
-
-
-def _reap_stale_pending_instances() -> int:
-    """Remove pending ("starting") instances whose TTL has expired.
-
-    An instance is considered stale when it has been in a non-ready state
-    (no successful health check) for longer than ``PENDING_INSTANCE_TTL_SECONDS``.
-
-    Returns the number of reaped entries.  Must be called while ``_lock`` is held.
-    """
-    now = _now()
-    deadline = now - PENDING_INSTANCE_TTL_SECONDS
-    stale: List[int] = []
-    for idx, entry in enumerate(_instances):
-        state = str(entry.get("effective_state") or entry.get("health") or "")
-        if state in {"ready", INSTANCE_HEALTH_HEALTHY}:
-            continue
-        started = float(entry.get("started") or entry.get("registered_at") or now)
-        if started < deadline:
-            stale.append(idx)
-    # Remove in reverse order to keep indices valid.
-    for idx in reversed(stale):
-        removed = _instances.pop(idx)
-        _debug_log(
-            "REAP_STALE",
-            pid=removed.get("pid"),
-            port=removed.get("port"),
-            state=removed.get("effective_state") or removed.get("health"),
-        )
-    return len(stale)
-
-
-def _instance_sort_key(entry: Dict[str, Any]) -> tuple[int, int, float, int]:
-    snapshot = _public_instance_record(entry)
-    port = snapshot.get("port")
-    quarantined_until = float(snapshot.get("quarantined_until") or 0.0)
-    effective_state = str(snapshot.get("effective_state") or "")
-    is_quarantined = quarantined_until > _now()
-    health_penalty = (
-        1
-        if effective_state
-        in {
-            INSTANCE_HEALTH_UNREACHABLE,
-            INSTANCE_HEALTH_UNRESPONSIVE,
-            INSTANCE_HEALTH_ERROR,
-            "starting",
-            "analyzing",
-        }
-        else 0
-    )
-    return (
-        1 if is_quarantined else 0,
-        health_penalty,
-        0 if port == 10000 else 1,
-        float(entry.get("started", float("inf"))),
-    )
-
-
-def _main_thread_lag_seconds(
-    entry: Dict[str, Any], now: Optional[float] = None
-) -> Optional[float]:
-    last_tick = entry.get("main_thread_last_tick_at")
-    if last_tick is None:
-        return None
-    try:
-        lag = float((now if now is not None else _now()) - float(last_tick))
-    except (TypeError, ValueError):
-        return None
-    return max(lag, 0.0)
-
-
-def _derive_effective_state(
-    entry: Dict[str, Any], now: Optional[float] = None
-) -> tuple[str, Optional[str], bool]:
-    now = _now() if now is None else now
-    ready = bool(entry.get("ready", True))
-    lifecycle_state = str(entry.get("lifecycle_state") or "").strip() or None
-    health = str(entry.get("health") or INSTANCE_HEALTH_HEALTHY)
-    lag = _main_thread_lag_seconds(entry, now)
-    main_thread_stale = ready and lag is not None and lag > MAIN_THREAD_STALE_SECONDS
-
-    if not ready:
-        state = lifecycle_state or "starting"
-        return state, "instance_not_ready", main_thread_stale
-    if main_thread_stale:
-        return INSTANCE_HEALTH_UNRESPONSIVE, "main_thread_stale", True
-    if health in {
-        INSTANCE_HEALTH_UNREACHABLE,
-        INSTANCE_HEALTH_UNRESPONSIVE,
-        INSTANCE_HEALTH_ERROR,
-    }:
-        return health, f"health_{health}", False
-    if lifecycle_state in {"starting", "analyzing"}:
-        return lifecycle_state, "lifecycle", False
-    return "ready", None, False
-
-
-def _public_instance_record(entry: Dict[str, Any]) -> Dict[str, Any]:
-    snapshot = dict(entry)
-    now = _now()
-    effective_state, effective_reason, main_thread_stale = _derive_effective_state(
-        entry, now
-    )
-    snapshot["effective_state"] = effective_state
-    snapshot["effective_reason"] = effective_reason
-    snapshot["main_thread_stale"] = main_thread_stale
-    snapshot["main_thread_lag_seconds"] = _main_thread_lag_seconds(entry, now)
-    return snapshot
-
-
-def _auto_routable_instance(entry: Dict[str, Any]) -> bool:
-    snapshot = _public_instance_record(entry)
-    return str(snapshot.get("effective_state") or "") == "ready"
-
-
-def _preflight_instance_route(entry: Dict[str, Any]) -> Optional[JSONResponse]:
-    snapshot = _public_instance_record(entry)
-    effective_state = str(snapshot.get("effective_state") or "")
-    port = snapshot.get("port")
-    if effective_state in {"starting", "analyzing"}:
-        return JSONResponse(
-            {
-                "error": f"Instance on port {port} is not ready yet ({effective_state})",
-                "effective_state": effective_state,
-            },
-            status_code=503,
-        )
-    if effective_state == INSTANCE_HEALTH_UNRESPONSIVE:
-        return JSONResponse(
-            {
-                "error": f"Instance on port {port} is unresponsive",
-                "effective_state": effective_state,
-                "main_thread_stale": bool(snapshot.get("main_thread_stale")),
-            },
-            status_code=504,
-        )
-    return None
-
-
-def _with_gateway_metadata(
-    payload: Dict[str, Any], previous: Optional[Dict[str, Any]] = None
-) -> Dict[str, Any]:
-    now = _now()
-    record = dict(payload)
-    previous = previous or {}
-    record.setdefault("registered_at", previous.get("registered_at", now))
-    record.setdefault("health", previous.get("health", INSTANCE_HEALTH_HEALTHY))
-    record.setdefault("last_success_at", previous.get("last_success_at"))
-    record.setdefault("last_failure_at", previous.get("last_failure_at"))
-    record.setdefault("last_error", previous.get("last_error"))
-    record.setdefault("last_error_kind", previous.get("last_error_kind"))
-    record.setdefault(
-        "consecutive_failures", int(previous.get("consecutive_failures") or 0)
-    )
-    record.setdefault(
-        "quarantined_until", float(previous.get("quarantined_until") or 0.0)
-    )
-    return record
-
-
-def _mark_instance_success(port: int) -> None:
-    now = _now()
-    with _lock:
-        for entry in _instances:
-            if entry.get("port") != port:
-                continue
-            entry["health"] = INSTANCE_HEALTH_HEALTHY
-            entry["last_success_at"] = now
-            entry["last_error"] = None
-            entry["last_error_kind"] = None
-            entry["consecutive_failures"] = 0
-            entry["quarantined_until"] = 0.0
-            break
-
-
-def _mark_instance_failure(
-    port: int, health: str, error: str, error_kind: str, quarantine: bool = False
-) -> None:
-    now = _now()
-    with _lock:
-        for entry in _instances:
-            if entry.get("port") != port:
-                continue
-            failures = int(entry.get("consecutive_failures") or 0) + 1
-            entry["health"] = health
-            entry["last_failure_at"] = now
-            entry["last_error"] = error
-            entry["last_error_kind"] = error_kind
-            entry["consecutive_failures"] = failures
-            if quarantine or failures >= INSTANCE_FAILURE_THRESHOLD:
-                entry["quarantined_until"] = now + INSTANCE_FAILURE_QUARANTINE_SECONDS
-            break
-
-
-def _classify_call_exception(exc: Exception) -> tuple[str, int, str]:
-    if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
-        return INSTANCE_HEALTH_UNRESPONSIVE, 504, "timeout"
-    name = type(exc).__name__.lower()
-    if "timeout" in name:
-        return INSTANCE_HEALTH_UNRESPONSIVE, 504, "timeout"
-    if isinstance(exc, OSError):
-        return INSTANCE_HEALTH_UNREACHABLE, 503, "connect"
-    return INSTANCE_HEALTH_ERROR, 500, "backend"
-
-
-def _proxy_status() -> Dict[str, Any]:
-    return {
-        "enabled": True,
-        "running": _proxy_ready,
-        "url": f"http://{GATEWAY_CONNECT_HOST}:{GATEWAY_PORT}{MCP_PATH}",
-        "host": GATEWAY_CONNECT_HOST,
-        "bind_host": GATEWAY_BIND_HOST,
-        "port": GATEWAY_PORT,
-        "path": MCP_PATH,
-        "last_error": None
-        if _proxy_ready
-        else (_proxy_last_error or "gateway MCP route not ready"),
-    }
-
-
-async def _healthz(_: Request) -> JSONResponse:
-    return JSONResponse(
-        {
-            "ok": True,
-            "gateway": True,
-            "proxy": _proxy_status(),
-            "instance_count": len(_instances),
-            "started_at": _gateway_started_at,
-        }
-    )
-
-
-async def _instances_handler(_: Request) -> JSONResponse:
-    with _lock:
-        _reap_dead_instances()
-        _reap_stale_pending_instances()
-        return JSONResponse([_public_instance_record(entry) for entry in _instances])
-
-
-async def _debug_get(_: Request) -> JSONResponse:
-    return JSONResponse({"enabled": DEBUG_ENABLED})
-
-
-async def _debug_post(request: Request) -> JSONResponse:
-    payload = await request.json()
-    enable = bool(
-        payload.get("enable") if "enable" in payload else payload.get("enabled", False)
-    )
-    set_debug(enable)
-    return JSONResponse({"status": "ok", "enabled": DEBUG_ENABLED})
-
-
-async def _proxy_status_handler(_: Request) -> JSONResponse:
-    return JSONResponse(_proxy_status())
-
-
-async def _ensure_proxy_handler(_: Request) -> JSONResponse:
-    return JSONResponse(_proxy_status())
-
-
-def _signal_gateway_shutdown() -> None:
-    global _uvicorn_server
-    if _uvicorn_server is not None:
-        try:
-            _uvicorn_server.should_exit = True
-        except Exception:
-            pass
-
-
-async def _shutdown_handler(request: Request) -> JSONResponse:
-    payload = await request.json() if request.method == "POST" else {}
-    force = bool(payload.get("force", False))
-    with _lock:
-        instance_count = len(_instances)
-    if instance_count > 0 and not force:
-        return JSONResponse(
-            {
-                "error": "Gateway shutdown refused while IDA instances are still registered",
-                "instance_count": instance_count,
-            },
-            status_code=409,
-        )
-
-    threading.Timer(0.05, _signal_gateway_shutdown).start()
-    return JSONResponse(
-        {
-            "status": "ok",
-            "message": "Gateway shutdown requested",
-            "forced": force,
-            "instance_count": instance_count,
-        }
-    )
-
-
-async def _register_handler(request: Request) -> JSONResponse:
-    payload = await request.json()
-    if not {"pid", "port"}.issubset(payload):
-        return JSONResponse({"error": "missing fields"}, status_code=400)
-    with _lock:
-        pid = payload["pid"]
-        payload["last_seen_at"] = _now()
-        existing_idx = _find_instance_index_by_pid(pid)
-        previous = _instances[existing_idx] if existing_idx is not None else None
-        record = _with_gateway_metadata(payload, previous)
-        if existing_idx is None:
-            _instances.append(record)
-        else:
-            _instances[existing_idx] = record
-    _debug_log("REGISTER", pid=payload.get("pid"), port=payload.get("port"))
-    return JSONResponse({"status": "ok"})
-
-
-async def _update_instance_handler(request: Request) -> JSONResponse:
-    payload = await request.json()
-    pid = payload.get("pid")
-    port = payload.get("port")
-    if pid is None and port is None:
-        return JSONResponse({"error": "missing pid or port"}, status_code=400)
-
-    with _lock:
-        target = None
-        for entry in _instances:
-            if pid is not None and entry.get("pid") == pid:
-                target = entry
-                break
-            if pid is None and port is not None and entry.get("port") == port:
-                target = entry
-                break
-        if target is None:
-            return JSONResponse({"error": "instance not found"}, status_code=404)
-        for key, value in payload.items():
-            if key in {"pid", "port"}:
-                continue
-            target[key] = value
-        target["last_seen_at"] = _now()
-    return JSONResponse({"status": "ok"})
-
-
-async def _deregister_handler(request: Request) -> JSONResponse:
-    global _current_instance_port
-    payload = await request.json()
-    pid = payload.get("pid")
-    if pid is None:
-        return JSONResponse({"error": "missing pid"}, status_code=400)
-    with _lock:
-        remaining = [e for e in _instances if e.get("pid") != pid]
-        if _current_instance_port and not any(
-            e.get("port") == _current_instance_port for e in remaining
-        ):
-            _current_instance_port = None
-        _instances.clear()
-        _instances.extend(remaining)
-    _debug_log("DEREGISTER", pid=pid, remaining=len(_instances))
-    return JSONResponse({"status": "ok"})
-
-
-async def _call_handler(request: Request) -> JSONResponse:
-    payload = await request.json()
-    target_pid = payload.get("pid")
-    target_port = payload.get("port")
-    tool = payload.get("tool")
-    params = payload.get("params") or {}
-    if not tool:
-        return JSONResponse({"error": "missing tool"}, status_code=400)
-
-    with _lock:
-        _reap_dead_instances()
-        _reap_stale_pending_instances()
-        target = None
-        if target_pid is not None:
-            for entry in _instances:
-                if entry.get("pid") == target_pid:
-                    target = entry
-                    break
-        elif target_port is not None:
-            for entry in _instances:
-                if entry.get("port") == target_port:
-                    target = entry
-                    break
-    if target is None:
-        return JSONResponse({"error": "instance not found"}, status_code=404)
-
-    preflight = _preflight_instance_route(target)
-    if preflight is not None:
-        return preflight
-
-    port = target.get("port")
-    if not isinstance(port, int):
-        return JSONResponse({"error": "bad target port"}, status_code=500)
-
-    req_timeout = payload.get("timeout")
-    try:
-        effective_timeout = (
-            int(req_timeout)
-            if req_timeout and int(req_timeout) > 0
-            else REQUEST_TIMEOUT
-        )
-    except (ValueError, TypeError):
-        effective_timeout = REQUEST_TIMEOUT
-
-    try:
-        with socket.create_connection((LOCALHOST, port), timeout=1.0):
-            pass
-    except (ConnectionRefusedError, OSError, socket.timeout) as exc:
-        err_detail = f"Port {port} not reachable: {type(exc).__name__}: {exc}"
-        _mark_instance_failure(
-            port, INSTANCE_HEALTH_UNREACHABLE, err_detail, "connect", quarantine=True
-        )
-        return JSONResponse({"error": err_detail}, status_code=503)
-
-    if port not in _call_locks:
-        _call_locks[port] = asyncio.Lock()
-    call_lock = _call_locks[port]
-
-    acquired = False
-    try:
-        await asyncio.wait_for(call_lock.acquire(), timeout=effective_timeout + 5)
-        acquired = True
-    except TimeoutError:
-        err_detail = f"Timed out waiting for call lock on port {port}"
-        _mark_instance_failure(port, INSTANCE_HEALTH_DEGRADED, err_detail, "lock")
-        return JSONResponse({"error": err_detail}, status_code=503)
-
-    try:
-        from fastmcp import Client  # type: ignore
-
-        mcp_url = f"http://{LOCALHOST}:{port}/mcp/"
-        async with Client(mcp_url, timeout=effective_timeout) as client:  # type: ignore
-            resp = await client.call_tool(tool, params)
-            data = None
-            if hasattr(resp, "content") and resp.content:
-                for item in resp.content:
-                    text = getattr(item, "text", None)
-                    if text:
-                        try:
-                            data = json.loads(text)
-                            break
-                        except (json.JSONDecodeError, TypeError):
-                            continue
-            if data is None and hasattr(resp, "data") and resp.data is not None:
-
-                def norm(x: Any) -> Any:
-                    if isinstance(x, list):
-                        return [norm(i) for i in x]
-                    if isinstance(x, dict):
-                        return {k: norm(v) for k, v in x.items()}
-                    if hasattr(x, "model_dump"):
-                        return x.model_dump()
-                    if hasattr(x, "__dict__") and x.__dict__:
-                        return norm(vars(x))
-                    return x
-
-                data = norm(resp.data)
-        _mark_instance_success(port)
-        return JSONResponse({"tool": tool, "data": data})
-    except Exception as exc:
-        err_detail = f"{type(exc).__name__}: {exc}"
-        health, status_code, error_kind = _classify_call_exception(exc)
-        _mark_instance_failure(
-            port, health, err_detail, error_kind, quarantine=status_code >= 503
-        )
-        _debug_log(
-            "CALL_FAIL",
-            tool=tool,
-            target_port=port,
-            error=err_detail,
-            traceback=traceback.format_exc(),
-        )
-        return JSONResponse(
-            {"error": f"call failed: {err_detail}"}, status_code=status_code
-        )
-    finally:
-        if acquired:
-            call_lock.release()
 
 
 def _build_internal_app() -> Starlette:
@@ -661,25 +101,23 @@ def _build_app() -> Starlette:
 
     @asynccontextmanager
     async def gateway_lifespan(app: Starlette):
-        global _proxy_last_error, _proxy_ready
-
-        _proxy_ready = False
-        _proxy_last_error = None
+        instance_registry._proxy_ready = False
+        instance_registry._proxy_last_error = None
         try:
             # FastMCP's Streamable HTTP session manager must run in the parent
             # Starlette lifespan so request scopes inherit the initialized state.
             if hasattr(mcp_app, "lifespan"):
                 async with mcp_app.lifespan(app):
-                    _proxy_ready = True
+                    instance_registry._proxy_ready = True
                     yield
             else:
-                _proxy_ready = True
+                instance_registry._proxy_ready = True
                 yield
         except Exception as exc:
-            _proxy_last_error = str(exc)
+            instance_registry._proxy_last_error = str(exc)
             raise
         finally:
-            _proxy_ready = False
+            instance_registry._proxy_ready = False
 
     return Starlette(
         routes=[
@@ -693,7 +131,6 @@ def _build_app() -> Starlette:
 def serve_forever(host: str = GATEWAY_BIND_HOST, port: int = GATEWAY_PORT) -> None:
     import uvicorn
 
-    global _uvicorn_server
     app = _build_app()
     print(f"[IDA-MCP-Gateway] listening on http://{host}:{port}", flush=True)
     print(
@@ -703,8 +140,8 @@ def serve_forever(host: str = GATEWAY_BIND_HOST, port: int = GATEWAY_PORT) -> No
     config = uvicorn.Config(
         app, host=host, port=port, log_level="warning", access_log=False
     )
-    _uvicorn_server = uvicorn.Server(config)
-    _uvicorn_server.run()
+    registry_routes._uvicorn_server = uvicorn.Server(config)
+    registry_routes._uvicorn_server.run()
 
 
 if __name__ == "__main__":

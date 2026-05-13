@@ -13,23 +13,24 @@ from typing import Any
 
 from PySide6.QtCore import QObject, Signal, QThread
 
+from app.chat.agent_runner import AgentRunner
 from app.chat.agent_factory import AgentFactory
-from app.chat.errors import AgentBuildError, AgentRunError
+from app.chat.errors import AgentBuildError, McpConnectionError
+from app.chat.history_compactor import HistoryCompactor
 from app.chat.mcp_pool import McpClientPool
 from app.chat.models import (
-    AgentRunConfig,
     ChatMessage,
     Conversation,
     ResolvedSkill,
     StreamEvent,
 )
+from app.chat.message_persister import MessagePersister
 from app.chat.persistence import ChatPersistence
 from app.chat.prompts import build_system_prompt
 from app.chat.streaming import (
     make_run_completed_event,
     make_run_failed_event,
     make_run_started_event,
-    normalize_langgraph_events,
 )
 from shared.database import DatabaseStore
 
@@ -145,209 +146,95 @@ class ChatServiceWorker(QObject):
     ) -> None:
         """Run one agent turn: build agent, stream response, persist."""
         turn_id = _uid()
+        # Local cancel_event so concurrent turns don't interfere with each other.
+        cancel_event = asyncio.Event()
         self._active_turn = turn_id
-        self._cancel_event = asyncio.Event()
+        self._cancel_event = cancel_event
 
-        # Emit run_started
         self._emit(make_run_started_event(conversation_id, turn_id))
 
-        # Parse inputs
         provider = self._parse_provider(provider_dict)
         skill = self._parse_skill(skill_dict)
-        servers = self._parse_servers(mcp_server_dicts)
         history = [ChatMessage.from_dict(d) for d in message_history_dicts]
+        history = HistoryCompactor(
+            self._persistence, provider.max_context_tokens
+        ).compact(conversation_id, history)
+        persister = MessagePersister(self._persistence)
 
-        # Save user message
-        user_msg = ChatMessage(
-            conversation_id=conversation_id,
-            turn_id=turn_id,
-            role="user",
-            content=user_message,
-        )
-        self._persistence.save_message(user_msg)
+        persister.save_user_message(conversation_id, turn_id, user_message)
 
-        # Build system prompt
         system_prompt = build_system_prompt(
             skill=skill,
             override=None,
         )
 
-        # Update conversation status
         self._persistence.update_conversation_by_pk(
             conversation_id, status="running"
         )
 
-        # Build run config
-        run_config = AgentRunConfig(
-            conversation_id=conversation_id,
-            provider=provider,
-            skill=skill,
-            enabled_servers=servers,
-            message_history=history,
-            user_message=user_message,
+        runner = AgentRunner(
+            factory=self._factory,
+            pool=self._pool,
+            provider_dict=provider_dict,
+            servers_list=mcp_server_dicts,
+            skill_dict=skill_dict,
+            history=history,
             system_prompt=system_prompt,
+            conversation_id=conversation_id,
+            turn_id=turn_id,
         )
 
-        # Accumulate assistant content and reasoning content (thinking-mode LLMs)
-        assistant_content = ""
-        reasoning_content = ""
-
-        # Track tool calls for persistence (tool_call_id → ChatMessage).
-        # Using tool_call_id (unique per invocation) instead of tool_name
-        # avoids data loss when the same tool is called multiple times.
-        pending_tool_msgs: dict[str, ChatMessage] = {}
-
         try:
-            # Build agent
-            agent, _tools = await self._factory.build(run_config)
-
-            # Prepare input messages for LangGraph
-            input_messages = self._build_input_messages(
-                history,
-                user_message,
-                max_context_tokens=provider.max_context_tokens,
-            )
-
-            # Stream agent execution
-            async for event_bundle in agent.astream(
-                {"messages": input_messages},
-                stream_mode=["messages", "updates"],
-                config={"recursion_limit": run_config.max_steps},
-            ):
-                # Check cancellation
-                if self._cancel_event.is_set():
+            async for stream_event in runner.run(user_message):
+                if cancel_event.is_set():
                     self._emit(
                         make_run_failed_event(
                             conversation_id,
                             turn_id,
                             "Cancelled by user",
-                            partial_content=assistant_content,
+                            partial_content=runner.assistant_content,
                         )
                     )
                     break
 
-                # event_bundle from multi-mode stream is (mode, data)
-                if not isinstance(event_bundle, tuple) or len(event_bundle) < 2:
-                    continue
+                if stream_event.type == "tool_start" and runner.assistant_content:
+                    persister.save_assistant_message(
+                        conversation_id,
+                        turn_id,
+                        runner.assistant_content,
+                        runner.reasoning_content or None,
+                    )
+                    runner.assistant_content = ""
+                    runner.reasoning_content = ""
 
-                mode, data = event_bundle[0], event_bundle[1]
+                if stream_event.type in (
+                    "tool_start", "tool_result", "tool_error"
+                ):
+                    persister.save_tool_execution(stream_event)
 
-                # Extract reasoning_content from thinking-mode LLMs (DeepSeek-R1 etc.)
-                if mode == "messages":
-                    msg = data[0] if isinstance(data, tuple) and len(data) > 0 else None
-                    if msg is not None:
-                        rc = getattr(msg, "reasoning_content", None)
-                        if not rc and hasattr(msg, "additional_kwargs"):
-                            rc = msg.additional_kwargs.get("reasoning_content")
-                        if rc and isinstance(rc, str):
-                            reasoning_content += rc
-
-                stream_events = normalize_langgraph_events(
-                    mode, data, conversation_id, turn_id
-                )
-                for stream_event in stream_events:
-                    # Accumulate tokens
-                    if stream_event.type == "token":
-                        chunk = stream_event.payload.get("content", "")
-                        if isinstance(chunk, list):
-                            # Safety: join list blocks into a string
-                            parts = []
-                            for b in chunk:
-                                if isinstance(b, str):
-                                    parts.append(b)
-                                elif isinstance(b, dict) and b.get("type") == "text":
-                                    parts.append(b.get("text", ""))
-                            chunk = "".join(parts)
-                        if chunk:
-                            assistant_content += chunk
-
-                    elif stream_event.type == "tool_start":
-                        # Flush accumulated assistant text as a segment before
-                        # the tool message, so DB order is correct on reload.
-                        if assistant_content:
-                            seg_msg = ChatMessage(
-                                conversation_id=conversation_id,
-                                turn_id=turn_id,
-                                role="assistant",
-                                content=assistant_content,
-                                reasoning_content=reasoning_content or None,
-                            )
-                            self._persistence.save_message(seg_msg)
-                            assistant_content = ""
-                            reasoning_content = ""
-
-                        # Persist tool call start
-                        tool_name = stream_event.payload.get("tool_name", "")
-                        tool_call_id = stream_event.payload.get("tool_call_id", "")
-                        args = stream_event.payload.get("args", {})
-                        try:
-                            import json as _json
-                            args_json = _json.dumps(args, ensure_ascii=False)
-                        except (TypeError, ValueError):
-                            args_json = str(args)
-                        tool_msg = ChatMessage(
-                            conversation_id=conversation_id,
-                            turn_id=turn_id,
-                            role="tool",
-                            content=args_json,
-                            tool_name=tool_name,
-                            tool_call_id=tool_call_id,
-                        )
-                        self._persistence.save_message(tool_msg)
-                        # Use tool_call_id as key — unique per invocation,
-                        # unlike tool_name which collides on repeated calls.
-                        pending_tool_msgs[tool_call_id or tool_name] = tool_msg
-
-                    elif stream_event.type in ("tool_result", "tool_error"):
-                        # Update persisted tool message with result
-                        tool_call_id = stream_event.payload.get("tool_call_id", "")
-                        tool_name = stream_event.payload.get("tool_name", "")
-                        key = tool_call_id or tool_name
-                        result = stream_event.payload.get("result", "")
-                        error = stream_event.payload.get("error", "")
-                        combined = result or error or ""
-                        if key in pending_tool_msgs:
-                            # Update the existing message with the result
-                            msg_id = pending_tool_msgs[key].id
-                            old_content = pending_tool_msgs[key].content or ""
-                            try:
-                                import json as _json
-                                combined_data = {
-                                    "args": _json.loads(old_content),
-                                    "result": combined,
-                                }
-                                new_content = _json.dumps(combined_data, ensure_ascii=False)
-                            except (ValueError, TypeError, _json.JSONDecodeError):
-                                new_content = f"Args: {old_content}\nResult: {combined}"
-                            self._persistence.update_message_content(msg_id, new_content)
-                            del pending_tool_msgs[key]
-
-                    self._emit(stream_event)
+                self._emit(stream_event)
 
             else:
-                # Normal completion (no break from cancel)
                 self._emit(
                     make_run_completed_event(
-                        conversation_id, turn_id, assistant_content
+                        conversation_id, turn_id, runner.assistant_content
                     )
                 )
 
-                # Save assistant message
-                assistant_msg = ChatMessage(
-                    conversation_id=conversation_id,
-                    turn_id=turn_id,
-                    role="assistant",
-                    content=assistant_content,
-                    reasoning_content=reasoning_content or None,
+                persister.save_assistant_message(
+                    conversation_id,
+                    turn_id,
+                    runner.assistant_content,
+                    runner.reasoning_content or None,
                 )
-                self._persistence.save_message(assistant_msg)
 
-                # Update conversation
                 updates: dict[str, Any] = {
                     "status": "idle",
                     "updated_at": ChatMessage().created_at,
                 }
-                inferred = self._infer_title(user_message, assistant_content)
+                inferred = self._infer_title(
+                    user_message, runner.assistant_content
+                )
                 if inferred:
                     updates["title"] = inferred
                 self._persistence.update_conversation_by_pk(
@@ -355,11 +242,38 @@ class ChatServiceWorker(QObject):
                     **updates,
                 )
 
+        except McpConnectionError as exc:
+            logger.error("MCP connection failed: %s", exc)
+            error_detail = str(exc)
+            if (
+                "ConnectError" in error_detail
+                or "connection attempts failed" in error_detail
+            ):
+                error_text = (
+                    f"MCP 连接失败：无法连接到 {exc.server_name}，请确认服务已启动。"
+                )
+            else:
+                error_text = error_detail.splitlines()[0]
+            self._emit(
+                make_run_failed_event(
+                    conversation_id,
+                    turn_id,
+                    error_text,
+                    runner.assistant_content,
+                )
+            )
+            self._persistence.update_conversation_by_pk(
+                conversation_id, status="failed"
+            )
+
         except AgentBuildError as exc:
             logger.error("Agent build failed: %s", exc)
             self._emit(
                 make_run_failed_event(
-                    conversation_id, turn_id, str(exc), assistant_content
+                    conversation_id,
+                    turn_id,
+                    str(exc),
+                    runner.assistant_content,
                 )
             )
             self._persistence.update_conversation_by_pk(
@@ -370,14 +284,20 @@ class ChatServiceWorker(QObject):
             logger.exception("Unexpected error during agent run")
             error_text = str(exc)
             if exc.__class__.__name__ == "GraphRecursionError":
+                max_steps = 100_000
+                if runner.run_config is not None:
+                    max_steps = runner.run_config.max_steps
                 error_text = (
                     f"Agent stopped after reaching the step limit "
-                    f"({run_config.max_steps}). Try asking a narrower question "
+                    f"({max_steps}). Try asking a narrower question "
                     "or increase the agent step limit."
                 )
             self._emit(
                 make_run_failed_event(
-                    conversation_id, turn_id, error_text, assistant_content
+                    conversation_id,
+                    turn_id,
+                    error_text,
+                    runner.assistant_content,
                 )
             )
             self._persistence.update_conversation_by_pk(
@@ -385,8 +305,10 @@ class ChatServiceWorker(QObject):
             )
 
         finally:
-            self._active_turn = None
-            self._cancel_event = None
+            # Only clear shared state if this turn is still the active one.
+            if self._active_turn == turn_id:
+                self._active_turn = None
+                self._cancel_event = None
 
     # ------------------------------------------------------------------
     # Helpers
@@ -444,109 +366,6 @@ class ChatServiceWorker(QObject):
         from supervisor.models import McpServerEntry
 
         return [McpServerEntry.from_dict(d) for d in data_list]
-
-    @staticmethod
-    def _build_input_messages(
-        history: list[ChatMessage],
-        user_message: str,
-        max_context_tokens: int = 0,
-    ) -> list[Any]:
-        """Build langchain-compatible message list from history + new message."""
-        from langchain_core.messages import HumanMessage, SystemMessage
-
-        messages: list[Any] = []
-        compacted_summary, history = ChatServiceWorker._compact_history(
-            history, user_message, max_context_tokens
-        )
-
-        if compacted_summary:
-            messages.append(SystemMessage(content=compacted_summary))
-
-        for msg in history:
-            messages.append(msg.to_langchain_message())
-
-        messages.append(HumanMessage(content=user_message))
-        return messages
-
-    @staticmethod
-    def _compact_history(
-        history: list[ChatMessage],
-        user_message: str,
-        max_context_tokens: int,
-    ) -> tuple[str | None, list[ChatMessage]]:
-        """Keep recent history within the configured context budget.
-
-        ``max_context_tokens <= 0`` means no compaction.  Token counting is an
-        intentionally conservative approximation so this works without
-        provider-specific tokenizers.
-        """
-        if max_context_tokens <= 0 or not history:
-            return None, history
-
-        # Leave room for the system prompt, tool schemas, model output, and
-        # tokenizer variance.  The retained chat history gets the rest.
-        budget = max(512, int(max_context_tokens * 0.55))
-        used = ChatServiceWorker._estimate_text_tokens(user_message) + 8
-        kept: list[ChatMessage] = []
-        omitted: list[ChatMessage] = []
-
-        for msg in reversed(history):
-            cost = ChatServiceWorker._estimate_message_tokens(msg)
-            if used + cost > budget:
-                omitted.append(msg)
-                continue
-            kept.append(msg)
-            used += cost
-
-        kept.reverse()
-        omitted.reverse()
-
-        # Avoid replaying orphan tool messages if compaction cut off the
-        # corresponding assistant tool-call request.
-        while kept and kept[0].role == "tool":
-            omitted.append(kept.pop(0))
-
-        if not omitted:
-            return None, kept
-
-        summary = ChatServiceWorker._build_compaction_summary(omitted)
-        return summary, kept
-
-    @staticmethod
-    def _estimate_message_tokens(msg: ChatMessage) -> int:
-        text = msg.content or ""
-        if msg.reasoning_content:
-            text += "\n" + msg.reasoning_content
-        if msg.tool_name:
-            text += "\n" + msg.tool_name
-        return ChatServiceWorker._estimate_text_tokens(text) + 8
-
-    @staticmethod
-    def _estimate_text_tokens(text: str) -> int:
-        return max(1, (len(text) + 3) // 4)
-
-    @staticmethod
-    def _build_compaction_summary(messages: list[ChatMessage]) -> str:
-        lines = [
-            "Earlier conversation was compacted to fit the model context.",
-            "Use this summary as background; ask for details if needed.",
-        ]
-        char_budget = 3000
-        used = sum(len(line) for line in lines)
-        for msg in messages:
-            role = msg.role
-            if msg.tool_name:
-                role = f"{role}:{msg.tool_name}"
-            content = " ".join((msg.content or "").split())
-            if not content:
-                continue
-            line = f"- {role}: {content[:400]}"
-            if used + len(line) > char_budget:
-                lines.append("- ... additional older messages omitted ...")
-                break
-            lines.append(line)
-            used += len(line)
-        return "\n".join(lines)
 
     @staticmethod
     def _infer_title(user_message: str, assistant_content: str) -> str:

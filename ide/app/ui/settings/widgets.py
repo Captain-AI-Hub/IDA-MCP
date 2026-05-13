@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QMouseEvent, QPainter, QColor, QPalette
 from PySide6.QtWidgets import QApplication, QComboBox, QDoubleSpinBox, QLineEdit, QSpinBox, QWidget
 

@@ -101,6 +101,7 @@ class _ConfigFormBinder:
     def collect_form_state(self, page: SettingsPage) -> SettingsFormState:
         """Read current widget values into a SettingsFormState."""
         data: dict[str, object] = {
+            "ida_dir": page._ida_dir.text(),
             "plugin_dir": page._plugin_dir.text(),
             "language": str(page._language_combo.currentData() or page._language),
             "theme_mode": str(page._theme_combo.currentData() or "light"),

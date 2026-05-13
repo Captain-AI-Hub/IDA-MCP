@@ -9,13 +9,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from shared.database import DatabaseStore
-from shared.paths import ensure_directory, get_ide_user_config_root
 
 from .models import ConfigStoreInfo, IdeConfig
-
-
-# Legacy filename kept for reference / migration detection.
-DEFAULT_CONFIG_FILENAME = "ide_config.json"
 
 
 class IdeConfigStore:
@@ -72,7 +67,3 @@ class IdeConfigStore:
         current = self.load().to_dict()
         current.update(updates)
         return self.save(IdeConfig.from_dict(current))
-
-    def reset(self) -> IdeConfig:
-        config = IdeConfig()
-        return self.save(config)

@@ -23,9 +23,6 @@ class ThemeMode(Enum):
 # Design tokens: named constants for UI metrics and fonts
 # -----------------------------------------------------------------------
 
-# Legacy font constants (kept for backward compat; prefer _Metrics)
-FONT_FAMILY = '"Segoe UI", "SF Pro Text", "Inter", sans-serif'
-MONO_FONT_FAMILY = '"Cascadia Code", "Consolas", monospace'
 MONO_FONT_SIZE = 10
 
 
@@ -237,7 +234,6 @@ class _Palette:
     sidebar_bg: str
     input_bg: str
     hover_bg: str
-    selected_bg: str
 
     # Text
     text_primary: str
@@ -274,7 +270,6 @@ class Theme:
         sidebar_bg="#f0f1f3",
         input_bg="#ffffff",
         hover_bg="#e9ecef",
-        selected_bg="#3b82f6",
         text_primary="#1a1a2e",
         text_secondary="#6b7280",
         accent_text="#ffffff",
@@ -300,7 +295,6 @@ class Theme:
         sidebar_bg="#141620",
         input_bg="#1e2130",
         hover_bg="#262a3a",
-        selected_bg="#3b82f6",
         text_primary="#e5e7eb",
         text_secondary="#9ca3af",
         accent_text="#ffffff",
@@ -1439,6 +1433,10 @@ class Theme:
             font-size: {m.font_size_md};
             font-weight: bold;
             padding: 0px;
+            min-width: 32px;
+            max-width: 32px;
+            min-height: 32px;
+            max-height: 32px;
         }}
         QPushButton#chatStopRoundButton:hover {{
             background: {c.status_error};

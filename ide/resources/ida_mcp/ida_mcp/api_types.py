@@ -36,24 +36,9 @@ except ImportError:
     ida_funcs = None
 
 try:
-    import ida_nalt  # type: ignore
-except ImportError:
-    ida_nalt = None
-
-try:
-    import ida_struct  # type: ignore
-except ImportError:
-    ida_struct = None
-
-try:
     import ida_hexrays  # type: ignore
 except ImportError:
     ida_hexrays = None
-
-try:
-    import ida_kernwin  # type: ignore
-except ImportError:
-    ida_kernwin = None
 
 # PT_SIL = 1: silent parse, do not show syntax-error dialogs
 PT_SIL = getattr(ida_typeinf, 'PT_SIL', 1)
@@ -441,7 +426,7 @@ def set_local_variable_type(
     if not f:
         return {"error": "function not found"}
     
-    from .api_analysis import _decompile_silent
+    from .analysis_utils import decompile_silent as _decompile_silent
     cfunc = _decompile_silent(f.start_ea)
     if not cfunc:
         return {"error": "decompile returned None"}

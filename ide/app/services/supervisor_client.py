@@ -77,6 +77,12 @@ class SupervisorClient:
     def reinstall(self, *, on_progress=None) -> InstallationActionResult:
         return self._manager.reinstall(on_progress=on_progress)
 
+    def detect_ida_executable(self, ida_dir: str) -> str | None:
+        return self._manager.installer.detect_ida_executable(ida_dir)
+
+    def detect_ida_python(self, ida_dir: str) -> str | None:
+        return self._manager.installer.detect_ida_python(ida_dir)
+
     # --- Model providers ---
 
     def get_model_providers(self) -> list[ModelProvider]:

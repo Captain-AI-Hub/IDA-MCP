@@ -26,6 +26,7 @@ class AgentBuildError(ChatError):
     """Failed to construct the LangGraph agent."""
 
 
+# TODO: not yet used; reserved for future error handling.
 class AgentRunError(ChatError):
     """Agent execution failed."""
 
@@ -34,6 +35,7 @@ class AgentRunError(ChatError):
         super().__init__(detail)
 
 
+# TODO: not yet used; reserved for future error handling.
 class ToolExecutionError(ChatError):
     """A tool call returned an error."""
 
@@ -48,5 +50,6 @@ class ToolExecutionError(ChatError):
         super().__init__(msg)
 
 
+# TODO: not yet used; reserved for future error handling.
 class PersistenceError(ChatError):
     """Database operation for chat data failed."""

@@ -4,8 +4,9 @@ import sys
 import types
 
 from ida_mcp import server_factory
+from ida_mcp.api_loader import ensure_api_modules_loaded
 from ida_mcp.proxy import register_tools
-from ida_mcp.rpc import ToolSpec, get_tool_specs, ensure_api_modules_loaded
+from ida_mcp.rpc import ToolSpec, get_tool_specs
 
 
 class _FakeProxyServer:

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import locale
 import os
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any
+
+from shared.models import ConfigStoreInfo, IdaMcpConfig
 
 
 class HealthState(str, Enum):
@@ -62,6 +64,19 @@ def default_ida_plugin_dir() -> str:
 _default_ida_plugin_dir = default_ida_plugin_dir
 
 
+def derive_plugin_dir(ida_dir: str) -> str:
+    """Derive the IDA plugin directory from an IDA installation directory.
+
+    If ``ida_dir`` is empty or the derived ``<ida_dir>/plugins`` does not
+    exist, falls back to the global default plugin directory.
+    """
+    if ida_dir:
+        candidate = Path(ida_dir) / "plugins"
+        if candidate.exists():
+            return str(candidate)
+    return default_ida_plugin_dir()
+
+
 @dataclass(slots=True)
 class IdeConfig:
     gateway_host: str = DEFAULT_GATEWAY_HOST
@@ -69,6 +84,7 @@ class IdeConfig:
     gateway_path: str = DEFAULT_GATEWAY_PATH
     request_timeout: int = 30
     auto_start_gateway: bool = False
+    ida_dir: str = ""
     plugin_dir: str = field(default_factory=_default_ida_plugin_dir)
     language: str = field(default_factory=_default_language)
     theme_mode: str = "light"  # "light" | "dark"
@@ -91,103 +107,6 @@ class IdeConfig:
                 if key in allowed and value is not None
             }
         )
-
-
-@dataclass(slots=True)
-class IdaMcpConfig:
-    enable_stdio: bool = False
-    enable_http: bool = True
-    enable_unsafe: bool = True
-    wsl_path_bridge: bool = False
-    http_host: str = DEFAULT_HTTP_HOST
-    http_port: int = DEFAULT_GATEWAY_PORT
-    http_path: str = DEFAULT_GATEWAY_PATH
-    ida_default_port: int = DEFAULT_IDA_PORT
-    ida_host: str = DEFAULT_IDA_HOST
-    ida_path: str | None = None
-    ida_python: str | None = None
-    open_in_ida_bundle_dir: str | None = None
-    open_in_ida_autonomous: bool = True
-    auto_start: bool = False
-    server_name: str = DEFAULT_SERVER_NAME
-    request_timeout: int = 30
-    debug: bool = False
-    skills_enabled: bool = True
-    config_path: str | None = None
-
-    # Field groups for config rendering order and comments.
-    FIELD_GROUPS: ClassVar[list[tuple[str, list[str]]]] = [
-        (
-            "Transport switches",
-            [
-                "enable_stdio",
-                "enable_http",
-                "enable_unsafe",
-                "wsl_path_bridge",
-            ],
-        ),
-        (
-            "HTTP gateway settings",
-            [
-                "http_host",
-                "http_port",
-                "http_path",
-            ],
-        ),
-        (
-            "IDA instance settings",
-            [
-                "ida_default_port",
-                "ida_host",
-                "ida_path",
-                "ida_python",
-                "open_in_ida_bundle_dir",
-                "open_in_ida_autonomous",
-                "auto_start",
-                "server_name",
-            ],
-        ),
-        (
-            "General settings",
-            [
-                "request_timeout",
-                "debug",
-            ],
-        ),
-    ]
-
-    @classmethod
-    def field_names(cls) -> set[str]:
-        """Return the set of config field names (excludes config_path)."""
-        return {f.name for f in fields(cls) if f.name != "config_path"}
-
-    @classmethod
-    def defaults(cls) -> dict[str, Any]:
-        """Return a dict of default values for all config fields (excludes config_path)."""
-        result: dict[str, Any] = {}
-        for f in fields(cls):
-            if f.name == "config_path":
-                continue
-            result[f.name] = f.default
-        return result
-
-    def to_dict(self) -> dict[str, Any]:
-        data = asdict(self)
-        data.pop("config_path", None)
-        return data
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> "IdaMcpConfig":
-        if not data:
-            return cls()
-        allowed = cls.field_names() | {"config_path"}
-        return cls(**{key: value for key, value in data.items() if key in allowed})
-
-
-@dataclass(slots=True)
-class ConfigStoreInfo:
-    path: str
-    exists: bool
 
 
 @dataclass(slots=True)

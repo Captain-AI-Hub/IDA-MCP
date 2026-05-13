@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
-from shared.database import DatabaseStore
 from shared.ida_mcp_config import IdaMcpConfigStore
+from shared.models import IdaMcpConfig
 
 from .config_store import IdeConfigStore
 from .gateway_controller import GatewayController
@@ -16,7 +16,6 @@ from .models import (
     EnvironmentProbe,
     GatewayStatus,
     HealthReport,
-    IdaMcpConfig,
     InstallationActionResult,
     InstallationCheck,
     IdeConfig,
@@ -24,6 +23,7 @@ from .models import (
     ModelProvider,
     SkillEntry,
     SupervisorSnapshot,
+    derive_plugin_dir,
 )
 
 
@@ -76,14 +76,20 @@ class SupervisorManager:
     def update_ida_mcp_config(self, **updates: object) -> IdaMcpConfig:
         return self._get_ida_mcp_config_store().update(**updates)
 
+    def _resolve_plugin_dir(self, config: IdeConfig) -> str:
+        """Return the effective plugin directory, deriving from ida_dir if set."""
+        if config.ida_dir:
+            return derive_plugin_dir(config.ida_dir)
+        return config.plugin_dir
+
     def probe_environment(self) -> EnvironmentProbe:
         config = self.get_ide_config()
-        return self.installer.probe(plugin_dir=config.plugin_dir)
+        return self.installer.probe(plugin_dir=self._resolve_plugin_dir(config))
 
     def check_installation(self) -> InstallationCheck:
         config = self.get_ide_config()
         return self.installer.check_installation(
-            plugin_dir=config.plugin_dir,
+            plugin_dir=self._resolve_plugin_dir(config),
             python_executable=self._effective_python_path(),
             config_path=None,
         )
@@ -91,7 +97,7 @@ class SupervisorManager:
     def repair_installation(self) -> InstallationActionResult:
         config = self.get_ide_config()
         return self.installer.repair_config(
-            plugin_dir=config.plugin_dir,
+            plugin_dir=self._resolve_plugin_dir(config),
             python_executable=self._effective_python_path(),
             config_path=None,
         )
@@ -110,7 +116,7 @@ class SupervisorManager:
                 ok=False,
                 summary="no Python executable configured",
                 check=self.installer.check_installation(
-                    plugin_dir=config.plugin_dir,
+                    plugin_dir=self._resolve_plugin_dir(config),
                     python_executable=None,
                     config_path=None,
                 ),
@@ -121,7 +127,7 @@ class SupervisorManager:
         return run_install(
             python_executable=python_path,
             ida_path=ida_mcp_config.ida_path,
-            plugin_dir=config.plugin_dir,
+            plugin_dir=self._resolve_plugin_dir(config),
             ida_mcp_config_dict=config_dict,
             on_progress=on_progress,
         )

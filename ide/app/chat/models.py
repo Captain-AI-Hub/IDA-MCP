@@ -81,7 +81,6 @@ class ChatMessage:
             AIMessage,
             HumanMessage,
             SystemMessage,
-            ToolMessage,
         )
 
         if self.role == "tool":

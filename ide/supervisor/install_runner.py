@@ -110,7 +110,7 @@ def _quote_config_value(value: object) -> str:
 
 
 def _render_config(config: dict[str, Any]) -> str:
-    from .models import IdaMcpConfig
+    from shared.models import IdaMcpConfig
 
     defaults = IdaMcpConfig.defaults()
     merged = {**defaults, **{k: v for k, v in config.items() if v is not None}}

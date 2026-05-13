@@ -4,12 +4,8 @@ from __future__ import annotations
 
 import os
 import re
-import shutil
 import subprocess
-import sys
 from pathlib import Path
-
-from shared.paths import get_ida_mcp_resources_dir
 
 
 def _dedupe_paths(paths: list[Path], *, must_exist: bool = False) -> list[str]:

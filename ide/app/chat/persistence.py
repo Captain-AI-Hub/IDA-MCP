@@ -14,6 +14,34 @@ from .models import (
 )
 
 
+_VALID_CONVERSATION_COLUMNS = {
+    "id",
+    "title",
+    "provider_id",
+    "model_name_snapshot",
+    "skill_id",
+    "system_prompt_override",
+    "status",
+    "created_at",
+    "updated_at",
+}
+
+_VALID_TOOL_EXECUTION_COLUMNS = {
+    "id",
+    "conversation_id",
+    "turn_id",
+    "mcp_server_id",
+    "server_name",
+    "tool_name",
+    "args_json",
+    "result_summary",
+    "status",
+    "error_text",
+    "started_at",
+    "finished_at",
+}
+
+
 class ChatPersistence:
     """Thin wrapper around DatabaseStore for chat-related CRUD."""
 
@@ -66,6 +94,9 @@ class ChatPersistence:
         """Update a conversation by its text primary key."""
         if not updates:
             return False
+        invalid_columns = set(updates) - _VALID_CONVERSATION_COLUMNS
+        if invalid_columns:
+            raise ValueError(f"Invalid conversation columns: {sorted(invalid_columns)}")
         set_clause = ", ".join(f"{k} = ?" for k in updates)
         serialized = [DatabaseStore._serialize(v) for v in updates.values()]
         serialized.append(conv_id)
@@ -209,6 +240,9 @@ class ChatPersistence:
         """Update a tool execution trace by its text primary key."""
         if not updates:
             return False
+        invalid_columns = set(updates) - _VALID_TOOL_EXECUTION_COLUMNS
+        if invalid_columns:
+            raise ValueError(f"Invalid tool execution columns: {sorted(invalid_columns)}")
         set_clause = ", ".join(f"{k} = ?" for k in updates)
         serialized = [DatabaseStore._serialize(v) for v in updates.values()]
         serialized.append(trace_id)

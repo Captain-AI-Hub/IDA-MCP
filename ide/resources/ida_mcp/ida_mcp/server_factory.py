@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from typing import Optional
 
+from .api_loader import ensure_api_modules_loaded
 from .config import get_server_name
-from .rpc import get_resources, get_tool_specs, ensure_api_modules_loaded
+from .rpc import get_resources, get_tool_specs
 
 __version__ = "0.2.0"
 

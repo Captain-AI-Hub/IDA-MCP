@@ -80,9 +80,6 @@ class DirectoryTreeWidget(QWidget):
         self._open_btn.setText(Path(path).name or path)
         self._open_btn.setToolTip(path)
 
-    def current_directory(self) -> str | None:
-        return self._root_path
-
     def _on_open_folder(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "Open Folder")
         if path:

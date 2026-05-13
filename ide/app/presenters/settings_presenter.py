@@ -29,11 +29,12 @@ _IDA_MCP_FIELD_ALIASES: dict[str, str] = {
 class SettingsFormState:
     """Flat form state for the settings UI.
 
-    IDE-owned fields (plugin_dir, language, theme_mode, ide_request_timeout)
+    IDE-owned fields (ida_dir, plugin_dir, language, theme_mode, ide_request_timeout)
     are mapped manually.  All IdaMcpConfig fields are included automatically
     via ``from_flat_dict``.
     """
 
+    ida_dir: str
     plugin_dir: str
     language: str
     theme_mode: str
@@ -88,6 +89,7 @@ def snapshot_to_form_state(snapshot: SettingsSnapshot) -> SettingsFormState:
             ida_mcp_dict[key] = ""
 
     flat: dict[str, Any] = {
+        "ida_dir": getattr(ide_config, "ida_dir", "") or "",
         "plugin_dir": ide_config.plugin_dir or "",
         "language": ide_config.language,
         "theme_mode": getattr(ide_config, "theme_mode", "light") or "light",
@@ -117,7 +119,8 @@ def form_state_to_updates(
     state: SettingsFormState,
 ) -> tuple[dict[str, object], dict[str, object]]:
     ide_updates: dict[str, object] = {
-        "plugin_dir": _clean_plugin_dir(state.plugin_dir),
+        "ida_dir": state.ida_dir.strip(),
+        "plugin_dir": _clean_plugin_dir(state.ida_dir, state.plugin_dir),
         "request_timeout": state.ide_request_timeout,
         "language": state.language,
         "theme_mode": state.theme_mode,
@@ -200,9 +203,14 @@ def _clean_optional(value: str) -> str | None:
     return cleaned or None
 
 
-def _clean_plugin_dir(value: str) -> str:
-    """Return stripped plugin_dir, falling back to the IDA default if empty."""
-    cleaned = value.strip()
+def _clean_plugin_dir(ida_dir: str, plugin_dir: str) -> str:
+    """Return stripped plugin_dir, deriving from ida_dir or falling back to default."""
+    from supervisor.models import derive_plugin_dir
+
+    ida = ida_dir.strip()
+    if ida:
+        return derive_plugin_dir(ida)
+    cleaned = plugin_dir.strip()
     if cleaned:
         return cleaned
     from supervisor.models import default_ida_plugin_dir

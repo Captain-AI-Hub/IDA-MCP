@@ -14,7 +14,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QScrollArea,
-    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -169,24 +168,6 @@ class ToolTracePanel(QWidget):
         count = self._list_layout.count()
         self._list_layout.insertWidget(count - 1, entry)
         self._entries.append(entry)
-        self._update_count()
-
-    def update_last_trace(self, tool_name: str, status: str, summary: str = "") -> None:
-        """Update the most recent trace matching the tool name."""
-        for entry in reversed(self._entries):
-            if entry._name_label.text() == tool_name:
-                entry.update_status(status, summary)
-                return
-
-        # If no match found, add a new entry
-        self.add_trace(tool_name, status, summary)
-
-    def clear_traces(self) -> None:
-        """Remove all trace entries."""
-        for entry in self._entries:
-            self._list_layout.removeWidget(entry)
-            entry.deleteLater()
-        self._entries.clear()
         self._update_count()
 
     def _update_count(self) -> None:

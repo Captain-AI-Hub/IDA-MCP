@@ -24,7 +24,6 @@ from app.ui.settings.widgets import (
     ContextTokenEdit,
     NoWheelComboBox,
     NoWheelDoubleSpinBox,
-    NoWheelSpinBox,
 )
 
 
@@ -485,8 +484,6 @@ class McpServerDetailDialog(QDialog):
         return self._i18n.t(key, **kwargs)
 
     def _setup_ui(self) -> None:
-        from PySide6.QtCore import Qt
-
         server = self._server
         self.setWindowTitle(
             self._t("settings.mcp.detail.title", name=server.name if server else "")

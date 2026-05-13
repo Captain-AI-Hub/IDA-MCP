@@ -9,13 +9,11 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFileDialog,
-    QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QPushButton,
     QVBoxLayout,
-    QWidget,
 )
 
 from shared.database import DatabaseStore
@@ -66,23 +64,23 @@ class WorkspaceSelectorDialog(QDialog):
         self._browse_btn = QPushButton("浏览...")
         self._browse_btn.setObjectName("workspaceSelectorBrowse")
         self._browse_btn.clicked.connect(self._on_browse)
-        btn_box.addButton(self._browse_btn, QDialogButtonBox.ActionRole)
+        btn_box.addButton(self._browse_btn, QDialogButtonBox.ButtonRole.ActionRole)
 
         self._open_btn = QPushButton("打开")
         self._open_btn.setObjectName("workspaceSelectorOpen")
         self._open_btn.setEnabled(False)
         self._open_btn.clicked.connect(self.accept)
-        btn_box.addButton(self._open_btn, QDialogButtonBox.AcceptRole)
+        btn_box.addButton(self._open_btn, QDialogButtonBox.ButtonRole.AcceptRole)
 
         skip_btn = QPushButton("跳过")
         skip_btn.setObjectName("workspaceSelectorSkip")
         skip_btn.setToolTip("暂不设置工作区，可在侧边栏手动打开文件夹")
         skip_btn.clicked.connect(self._on_skip)
-        btn_box.addButton(skip_btn, QDialogButtonBox.RejectRole)
+        btn_box.addButton(skip_btn, QDialogButtonBox.ButtonRole.RejectRole)
 
         cancel_btn = QPushButton("取消")
         cancel_btn.clicked.connect(self.reject)
-        btn_box.addButton(cancel_btn, QDialogButtonBox.RejectRole)
+        btn_box.addButton(cancel_btn, QDialogButtonBox.ButtonRole.RejectRole)
 
         layout.addWidget(btn_box)
 

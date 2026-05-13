@@ -33,3 +33,4 @@ test/api_logs/
 *.nam
 *.til
 ide/.pytest_tmp/
+chinese_*.txt

@@ -7,7 +7,6 @@ from pathlib import Path
 import markdown
 from pygments.lexers import get_lexer_for_filename, ClassNotFound, TextLexer
 
-from PySide6.QtCore import Qt
 from PySide6.QtGui import (
     QColor,
     QFont,

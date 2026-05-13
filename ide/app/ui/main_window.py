@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (
     QDialog,
@@ -37,7 +39,6 @@ from app.services.settings_service import SettingsService
 from app.services.supervisor_client import SupervisorClient
 from supervisor.models import SupervisorSnapshot
 from app.ui.settings import SettingsPage
-from app.ui.theme import Theme
 from app.ui.workspace.directory_tree import DirectoryTreeWidget
 from app.ui.workspace.hex_view import HexViewWidget
 from app.ui.workspace.code_view import CodeViewWidget
@@ -91,7 +92,7 @@ class MainWindow(QMainWindow):
         self._status_buttons: dict[str, QPushButton] = {}
 
         self._chat_service = ChatService(workspace_path=workspace_path)
-        self._chat_page = ChatPage(self._i18n)
+        self._chat_page = ChatPage(self._i18n, supervisor_client=self.supervisor_client)
         self._chat_page.set_chat_service(self._chat_service)
 
         self._plan_view = QTreeWidget()
@@ -167,20 +168,42 @@ class MainWindow(QMainWindow):
         return chosen
 
     def _check_ida_mcp_install(self) -> None:
-        """Prompt to install IDA-MCP on first run if the plugin is missing."""
+        """Prompt to install IDA-MCP on first run when ida_dir is not configured."""
         config = self.supervisor_client.get_ide_config()
         if config.skip_ida_mcp_check:
             return
 
-        check = self.supervisor_client.check_installation()
-        if check.ida_mcp_py_exists or check.ida_mcp_package_exists:
+        # If ida_dir is already set, assume the user has configured their
+        # environment and skip the first-run prompt entirely.
+        if config.ida_dir:
             return
 
-        dialog = FirstRunInstallDialog(check.plugin_dir or "", parent=self)
+        check = self.supervisor_client.check_installation()
+
+        # Derive a default IDA dir from the plugin_dir (go up one level)
+        default_ida_dir = ""
+        if check.plugin_dir:
+            p = Path(check.plugin_dir)
+            if p.name.lower() == "plugins":
+                default_ida_dir = str(p.parent)
+
+        dialog = FirstRunInstallDialog(
+            default_ida_dir, check.plugin_dir or "", parent=self
+        )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             # User skipped — suppress future prompts
             self.supervisor_client.update_ide_config(skip_ida_mcp_check=True)
             return
+
+        # Persist the user-selected IDA directory so Settings opens with it
+        chosen_ida_dir = dialog.selected_ida_dir()
+        if chosen_ida_dir and chosen_ida_dir != config.ida_dir:
+            from supervisor.models import derive_plugin_dir
+
+            self.supervisor_client.update_ide_config(
+                ida_dir=chosen_ida_dir,
+                plugin_dir=derive_plugin_dir(chosen_ida_dir),
+            )
 
         # User wants to install — jump to Settings page
         self._apply_mode("settings")
@@ -577,9 +600,7 @@ class MainWindow(QMainWindow):
 
     def _load_theme_mode(self) -> str:
         try:
-            from supervisor.api import create_manager
-            manager = create_manager()
-            config = manager.get_ide_config()
+            config = self.supervisor_client.get_ide_config()
             return getattr(config, "theme_mode", "light") or "light"
         except Exception:
             return "light"

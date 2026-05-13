@@ -114,6 +114,28 @@ def _parse_value(value: str) -> Any:
     return value
 
 
+def _split_value_and_comment(text: str) -> tuple[str, str]:
+    quote: str | None = None
+    escaped = False
+    for index, char in enumerate(text):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if quote:
+            if char == quote:
+                quote = None
+            continue
+        if char in {'"', "'"}:
+            quote = char
+            continue
+        if char == "#":
+            return text[:index].rstrip(), text[index:].rstrip()
+    return text.rstrip(), ""
+
+
 def parse_config_file(path: str) -> Dict[str, Any]:
     """Parse any config.conf-style file."""
     config: Dict[str, Any] = {}
@@ -129,8 +151,7 @@ def parse_config_file(path: str) -> Dict[str, Any]:
                     continue
 
                 key, value = line.split("=", 1)
-                if "#" in value:
-                    value = value.split("#", 1)[0]
+                value, _comment = _split_value_and_comment(value)
                 config[key.strip()] = _parse_value(value)
     except Exception:
         return {}

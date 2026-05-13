@@ -104,3 +104,9 @@ class SettingsService:
 
     def get_skills_dir(self) -> "Path":
         return self._supervisor_client.get_skills_dir()
+
+    def detect_ida_executable(self, ida_dir: str) -> str | None:
+        return self._supervisor_client.detect_ida_executable(ida_dir)
+
+    def detect_ida_python(self, ida_dir: str) -> str | None:
+        return self._supervisor_client.detect_ida_python(ida_dir)

@@ -9,8 +9,6 @@ Every HTTP request and response is logged via an optional log callback.
 from __future__ import annotations
 
 import json
-import os
-import signal
 import socket
 import subprocess
 import time
@@ -21,6 +19,7 @@ from typing import Any, Callable
 
 from shared.platform import display_path as _display_path
 
+from . import process_manager
 from .config_store import IdeConfigStore
 from .models import (
     GatewayState,
@@ -158,7 +157,7 @@ class GatewayController:
         self._log_msg(f"Port {port} open")
 
         # 2. Healthz
-        code, health = self._http_get(self._internal_url("/healthz"))
+        _, health = self._http_get(self._internal_url("/healthz"))
         if health is None:
             self._log_msg("healthz failed — gateway starting?")
             return GatewayStatus(
@@ -274,7 +273,7 @@ class GatewayController:
 
         # Shutdown accepted — wait for port to close
         self._log_msg("Shutdown accepted, waiting for port to close...")
-        for i in range(20):
+        for _ in range(20):
             if not self._tcp_port_open(host, port, timeout=0.5):
                 self._log_msg("Gateway stopped (port closed)")
                 break
@@ -312,56 +311,7 @@ class GatewayController:
 
     @staticmethod
     def _kill_port(port: int) -> bool:
-        """Kill the process listening on the given port. Returns True on success."""
-        try:
-            if os.name == "nt":
-                # netstat -ano to find PID, then taskkill
-                proc = subprocess.run(
-                    ["netstat", "-ano", "-p", "TCP"],
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                )
-                for line in proc.stdout.splitlines():
-                    # Match lines like  TCP    0.0.0.0:13337    0.0.0.0:0    LISTENING    12345
-                    parts = line.split()
-                    if (
-                        len(parts) >= 5
-                        and parts[3] == "LISTENING"
-                        and parts[1] == f"0.0.0.0:{port}"
-                    ):
-                        pid = parts[-1]
-                        if pid.isdigit():
-                            kill_result = subprocess.run(
-                                ["taskkill", "/F", "/T", "/PID", pid],
-                                capture_output=True,
-                                timeout=5,
-                            )
-                            return kill_result.returncode == 0
-                return False
-            else:
-                # lsof or fuser on Unix
-                proc = subprocess.run(
-                    ["lsof", "-ti", f":{port}"],
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                )
-                pids = proc.stdout.strip().split()
-                if pids:
-                    for pid_str in pids:
-                        if pid_str.isdigit():
-                            os.kill(int(pid_str), signal.SIGKILL)
-                    return True
-                return False
-        except Exception:
-            return False
-
-    def restart(self) -> GatewayStatus:
-        stopped = self.stop()
-        if stopped.state == GatewayState.ERROR:
-            return stopped
-        return self.start()
+        return process_manager.kill_process_on_port(port)
 
     # ------------------------------------------------------------------
     # Subprocess fallback for starting
@@ -378,8 +328,6 @@ class GatewayController:
             msg = f"plugin_dir ({_display_path(plugin_dir)}) does not exist."
             self._log_msg(f"ERROR: {msg}")
             return _error_status(msg)
-
-        host, port, path = self._gateway_params()
 
         # Verify command.py exists in the installed plugin
         command_script = plugin_dir / "ida_mcp" / "command.py"
