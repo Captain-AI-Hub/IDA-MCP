@@ -17,13 +17,9 @@ from .utils import parse_address, normalize_list_input, hex_addr
 try:
     import idaapi  # type: ignore
     import ida_bytes  # type: ignore
-    import ida_name  # type: ignore
-    import ida_kernwin  # type: ignore
 except ImportError:
     idaapi = None
     ida_bytes = None
-    ida_name = None
-    ida_kernwin = None
 
 
 # ============================================================================

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import hashlib
+import stat
 from typing import Annotated, Optional, List
 
 from .rpc import tool
@@ -171,11 +172,13 @@ def get_metadata() -> dict:
     file_hash: Optional[str] = None
     if input_file and os.path.isfile(input_file):
         try:
-            h = hashlib.sha256()
-            with open(input_file, 'rb') as f:
-                for chunk in iter(lambda: f.read(1024 * 1024), b''):
-                    h.update(chunk)
-            file_hash = h.hexdigest()
+            input_stat = os.stat(input_file)
+            if stat.S_ISREG(input_stat.st_mode) and input_stat.st_size <= 32 * 1024 * 1024:
+                h = hashlib.sha256()
+                with open(input_file, 'rb') as f:
+                    for chunk in iter(lambda: f.read(1024 * 1024), b''):
+                        h.update(chunk)
+                file_hash = h.hexdigest()
         except Exception:
             file_hash = None
     

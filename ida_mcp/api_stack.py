@@ -270,7 +270,7 @@ def _stack_frame_single(query: str) -> dict:
     # get Hex-Rays local variables (always attempt to retrieve all locals)
     try:
         if ida_hexrays.init_hexrays_plugin():  # type: ignore
-            from .api_analysis import _decompile_silent
+            from .analysis_utils import decompile_silent as _decompile_silent
             cfunc = _decompile_silent(f.start_ea)  # type: ignore
             if cfunc and cfunc.lvars:  # type: ignore
                 for lv in cfunc.lvars:  # type: ignore

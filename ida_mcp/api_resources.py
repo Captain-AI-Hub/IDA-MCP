@@ -30,11 +30,6 @@ except ImportError:  # pragma: no cover
     ida_bytes = None
 
 try:
-    import ida_name  # type: ignore
-except ImportError:  # pragma: no cover
-    ida_name = None
-
-try:
     import ida_typeinf  # type: ignore
 except ImportError:  # pragma: no cover
     ida_typeinf = None
@@ -222,23 +217,6 @@ def _normalize_segment_item(item: dict[str, Any]) -> dict[str, Any]:
         "perm": item.get("perm"),
         "class": item.get("class"),
         "bitness": item.get("bitness"),
-    }
-
-
-def _normalize_import_item(item: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "module": item.get("module"),
-        "name": item.get("name"),
-        "address": item.get("ea"),
-        "ordinal": item.get("ordinal"),
-    }
-
-
-def _normalize_export_item(item: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "name": item.get("name"),
-        "address": item.get("ea"),
-        "ordinal": item.get("ordinal"),
     }
 
 

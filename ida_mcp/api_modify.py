@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from typing import Annotated, Optional, List, Dict, Any, Union
 
-from .rpc import tool
+from .rpc import tool, unsafe
 from .strings_cache import invalidate_strings_cache
 from .sync import idaread, idawrite, wait_for_auto_analysis
 from .utils import parse_address, is_valid_c_identifier, normalize_list_input, hex_addr
@@ -230,7 +230,7 @@ def rename_local_variable(
     if not f:
         return {"error": "function not found"}
     
-    from .api_analysis import _decompile_silent
+    from .analysis_utils import decompile_silent as _decompile_silent
     cfunc = _decompile_silent(f.start_ea)
     if not cfunc:
         return {"error": "decompile returned None"}
@@ -342,6 +342,7 @@ def rename_global_variable(
 # Byte patching
 # ============================================================================
 
+@unsafe
 @tool
 @idawrite
 def patch_bytes(

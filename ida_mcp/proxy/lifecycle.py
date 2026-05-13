@@ -76,7 +76,7 @@ def _wsl_to_windows_path(path: str) -> Optional[str]:
     return f"{drive}:\\{fixed_tail}"
 
 
-def _local_fs_path(path: Optional[str]) -> Optional[str]:
+def _apply_path_bridge(path: Optional[str], *, to_windows: bool) -> Optional[str]:
     if path is None:
         return None
 
@@ -84,21 +84,17 @@ def _local_fs_path(path: Optional[str]) -> Optional[str]:
     if not candidate or not is_wsl_path_bridge_enabled():
         return candidate
 
-    if os.name == "nt":
+    if to_windows:
         return _wsl_to_windows_path(candidate) or candidate
-
     return _windows_to_wsl_path(candidate) or candidate
 
 
+def _local_fs_path(path: Optional[str]) -> Optional[str]:
+    return _apply_path_bridge(path, to_windows=(os.name == "nt"))
+
+
 def _host_launch_path(path: Optional[str]) -> Optional[str]:
-    if path is None:
-        return None
-
-    candidate = str(path).strip()
-    if not candidate or not is_wsl_path_bridge_enabled():
-        return candidate
-
-    return _wsl_to_windows_path(candidate) or candidate
+    return _apply_path_bridge(path, to_windows=True)
 
 
 def _is_host_windows_path(path: Optional[str]) -> bool:

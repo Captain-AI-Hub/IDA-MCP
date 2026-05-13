@@ -31,6 +31,5 @@ def close_ida(
             return {"error": "IDA runtime unavailable"}
 
         ida_pro.qexit(0)
-        return {"status": "ok", "message": "IDA is closing"}
     except Exception as e:
         return {"error": str(e)}
