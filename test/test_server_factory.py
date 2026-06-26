@@ -9,6 +9,17 @@ from ida_mcp.proxy import register_tools
 from ida_mcp.rpc import ToolSpec, get_tool_specs
 
 
+def _tool_spec(name: str, fn) -> ToolSpec:
+    return ToolSpec(
+        name=name,
+        fn=fn,
+        description="Test tool",
+        unsafe=False,
+        execution_mode="read",
+        module_name="test",
+    )
+
+
 class _FakeProxyServer:
     def __init__(self) -> None:
         self.tool_names: list[str] = []
@@ -53,6 +64,51 @@ def test_proxy_registers_convert_number(monkeypatch):
     register_tools.register_tools(server)
 
     assert "convert_number" in server.tool_names
+
+
+def test_forward_wrapper_wraps_single_dict_for_list_tools(monkeypatch):
+    def list_tool(addr: str) -> list[dict]:
+        return []
+
+    monkeypatch.setattr(
+        register_tools,
+        "forward",
+        lambda tool, params, port, timeout=None: {"query": params["addr"]},
+    )
+
+    wrapper = register_tools._build_forward_wrapper(_tool_spec("decompile", list_tool))
+
+    assert wrapper(addr="0x401000") == [{"query": "0x401000"}]
+
+
+def test_forward_wrapper_unwraps_result_for_list_tools(monkeypatch):
+    def list_tool(addr: str) -> list[dict]:
+        return []
+
+    monkeypatch.setattr(
+        register_tools,
+        "forward",
+        lambda tool, params, port, timeout=None: {"result": [{"query": params["addr"]}]},
+    )
+
+    wrapper = register_tools._build_forward_wrapper(_tool_spec("disasm", list_tool))
+
+    assert wrapper(addr="0x401000") == [{"query": "0x401000"}]
+
+
+def test_forward_wrapper_keeps_dict_tools_as_dict(monkeypatch):
+    def dict_tool() -> dict:
+        return {}
+
+    monkeypatch.setattr(
+        register_tools,
+        "forward",
+        lambda tool, params, port, timeout=None: {"ok": True},
+    )
+
+    wrapper = register_tools._build_forward_wrapper(_tool_spec("get_metadata", dict_tool))
+
+    assert wrapper() == {"ok": True}
 
 
 def test_proxy_registers_structured_analysis_tools(monkeypatch):

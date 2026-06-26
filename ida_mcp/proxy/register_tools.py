@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import functools
 import inspect
-from typing import Annotated, Any, List, Optional, get_type_hints
+from typing import Annotated, Any, List, Optional, get_args, get_origin, get_type_hints
 
 try:
     from pydantic import Field
@@ -40,6 +40,39 @@ def _build_forward_signature(spec: ToolSpec) -> inspect.Signature:
     return source_signature.replace(parameters=params)
 
 
+def _unwrap_annotated(annotation: Any) -> Any:
+    while get_origin(annotation) is Annotated:
+        args = get_args(annotation)
+        if not args:
+            break
+        annotation = args[0]
+    return annotation
+
+
+def _is_list_return(annotation: Any) -> bool:
+    annotation = _unwrap_annotated(annotation)
+    return annotation is list or get_origin(annotation) is list
+
+
+def _normalize_forwarded_result(spec: ToolSpec, result: Any) -> Any:
+    """Keep proxy results compatible with the backend tool output schema."""
+    return_annotation = get_type_hints(spec.fn, include_extras=True).get("return")
+    if not _is_list_return(return_annotation):
+        return result
+
+    if isinstance(result, list):
+        return result
+    if (
+        isinstance(result, dict)
+        and set(result.keys()) == {"result"}
+        and isinstance(result.get("result"), list)
+    ):
+        return result["result"]
+    if result is None:
+        return []
+    return [result]
+
+
 def _build_forward_wrapper(spec: ToolSpec) -> Any:
     source_signature = inspect.signature(spec.fn)
     source_param_names = tuple(source_signature.parameters.keys())
@@ -55,7 +88,8 @@ def _build_forward_wrapper(spec: ToolSpec) -> Any:
             for name in source_param_names
             if name in bound.arguments
         }
-        return forward(spec.name, params, port, timeout=timeout)
+        result = forward(spec.name, params, port, timeout=timeout)
+        return _normalize_forwarded_result(spec, result)
 
     wrapper.__signature__ = _build_forward_signature(spec)  # type: ignore[attr-defined]
     wrapper.__annotations__ = dict(source_hints)
