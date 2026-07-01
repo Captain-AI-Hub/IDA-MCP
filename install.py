@@ -531,7 +531,7 @@ def main() -> None:
         print()
         for inst in python_installations:
             tag = f" ({_s('preferred', _GREEN)})" if inst is python_installations[0] else ""
-            print(f"    {_s(f'#{inst["index"]}', _DIM)}  Python {inst['version']}  →  {inst['exe']}{tag}")
+            print(f"    {_s('#' + inst['index'], _DIM)}  Python {inst['version']}  →  {inst['exe']}{tag}")
         print()
 
         _info(f"{t('detected')}: Python {python_installations[0]['version']}")

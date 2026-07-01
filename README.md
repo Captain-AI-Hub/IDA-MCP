@@ -33,6 +33,10 @@ IDA-MCP/
 
 ## Installation
 
+Requirements:
+
+- Python > 3.11
+
 Copy `ida_mcp.py` and the `ida_mcp/` directory into IDA's plugin directory, then
 install dependencies into IDA's Python environment:
 

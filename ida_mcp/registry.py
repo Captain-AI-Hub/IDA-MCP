@@ -216,8 +216,7 @@ def ensure_registry_server(startup_timeout: float = 3.0) -> bool:
         gateway_pid = _spawn_detached(
             [
                 python_exe,
-                "-m",
-                "ida_mcp.registry_server",
+                os.path.join(_package_dir(), "registry_server.py"),
                 "--host",
                 get_http_bind_host(),
                 "--port",
