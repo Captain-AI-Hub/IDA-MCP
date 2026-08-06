@@ -39,6 +39,35 @@ class TestCommandCli:
         assert seen["timeout"] == 5.0
         assert "Gateway: running" in captured.out
 
+    def test_gateway_start_without_timeout_uses_configured_default(
+        self, monkeypatch, capsys
+    ):
+        seen = {}
+
+        def fake_ensure(startup_timeout=None):
+            seen["timeout"] = startup_timeout
+            return {
+                "gateway": {"alive": True},
+                "instances": [],
+                "count": 0,
+                "gateway_internal": {"host": "127.0.0.1", "port": 11338},
+                "gateway_proxy": {
+                    "alive": True,
+                    "enabled": True,
+                    "host": "127.0.0.1",
+                    "port": 11338,
+                    "path": "/mcp",
+                },
+            }
+
+        monkeypatch.setattr(command.control, "ensure_gateway_running", fake_ensure)
+
+        exit_code = command.main(["gateway", "start"])
+
+        assert exit_code == 0
+        assert seen["timeout"] is None
+        assert "Gateway: running" in capsys.readouterr().out
+
     def test_gateway_stop_passes_force_flag(self, monkeypatch, capsys):
         seen: dict[str, object] = {}
 

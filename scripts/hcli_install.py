@@ -20,6 +20,11 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from package_hcli import ROOT, build_archive
 
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from ida_mcp.command_launcher import find_installed_command, install_hcli_launchers
+
 
 def _ida_executable_name() -> str:
     return "ida.exe" if os.name == "nt" else "ida"
@@ -278,7 +283,27 @@ def main() -> int:
             ida_python=ida_python,
         )
         print("Starting HCLI with detected paths as the prompt defaults...")
-        return subprocess.run([hcli, "plugin", "install", str(personalized)], check=False).returncode
+        result = subprocess.run(
+            [hcli, "plugin", "install", str(personalized)],
+            check=False,
+        )
+        if result.returncode == 0 and ida_python is not None:
+            installed_command = find_installed_command()
+            if installed_command is not None:
+                try:
+                    launchers = install_hcli_launchers(
+                        python_executable=ida_python,
+                        command_script=installed_command,
+                        hcli_executable=hcli,
+                    )
+                    print(
+                        "Installed gateway control commands: "
+                        + ", ".join(path.name for path in launchers)
+                    )
+                    print("Examples: hcli-gateway status | start | stop | restart")
+                except OSError as exc:
+                    print(f"warning: could not install HCLI companion commands: {exc}")
+        return result.returncode
 
 
 if __name__ == "__main__":

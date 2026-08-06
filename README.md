@@ -166,16 +166,40 @@ layout required for HCLI URL installation.
 
 ## Gateway And CLI
 
-```bash
-# Start the standalone gateway
-python ida_mcp/command.py gateway start --json
+IDA-MCP installs companion commands beside the standalone `hcli` executable.
+When installation uses `scripts/hcli_install.py`, they are created immediately;
+for direct URL installations, they are created on the first IDA-MCP load.
 
-# Status, stop, open IDA, call a tool directly
-python ida_mcp/command.py gateway status
-python ida_mcp/command.py gateway stop
-python ida_mcp/command.py ida open ./target.exe
-python ida_mcp/command.py tool call get_metadata --port 10000
+Use the short gateway command for frequent lifecycle and status checks:
+
+```bash
+hcli-gateway status
+hcli-gateway start
+hcli-gateway stop
+hcli-gateway restart
 ```
+
+The start and restart commands use the configured `request_timeout` when
+`--timeout` is omitted, allowing enough time for a cold FastMCP startup. Pass an
+explicit timeout when needed:
+
+```bash
+hcli-gateway restart --timeout 60
+```
+
+Use `hcli-ida-mcp` for the complete `command.py` command surface:
+
+```bash
+hcli-ida-mcp gateway status --json
+hcli-ida-mcp ida list
+hcli-ida-mcp ida open ./target.exe
+hcli-ida-mcp tool call get_metadata --port 10000
+hcli-ida-mcp resource list --port 10000
+```
+
+The launchers use the detected IDAPython executable and the `command.py` from
+the HCLI-installed plugin directory. If launcher creation is unavailable, invoke
+`ida_mcp/command.py` directly with that Python interpreter.
 
 Default endpoints:
 

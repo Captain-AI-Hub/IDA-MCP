@@ -278,7 +278,10 @@ def build_parser() -> argparse.ArgumentParser:
         "start", help="Start the standalone gateway"
     )
     gateway_start.add_argument(
-        "--timeout", type=float, default=3.0, help="Startup timeout in seconds"
+        "--timeout",
+        type=float,
+        default=None,
+        help="Startup timeout in seconds (default: configured request_timeout)",
     )
     gateway_start.add_argument("--json", action="store_true", help="Print JSON output")
     gateway_start.set_defaults(handler=_cmd_gateway_start)
@@ -306,7 +309,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Force stop even if instances are registered",
     )
     gateway_restart.add_argument(
-        "--timeout", type=float, default=3.0, help="Restart timeout in seconds"
+        "--timeout",
+        type=float,
+        default=None,
+        help="Restart timeout in seconds (default: configured request_timeout)",
     )
     gateway_restart.add_argument(
         "--json", action="store_true", help="Print JSON output"

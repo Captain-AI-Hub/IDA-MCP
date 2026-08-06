@@ -220,6 +220,21 @@ class IDAMCPPlugin(idaapi.plugin_t if idaapi else object):  # type: ignore
         detected_python = runtime_settings.get("ida_python")
         if detected_python:
             plugin_runtime._info(f"Effective IDAPython interpreter: {detected_python}")
+            try:
+                launchers = install_hcli_launchers(
+                    python_executable=detected_python,
+                    command_script=os.path.join(
+                        os.path.dirname(os.path.abspath(__file__)),
+                        "ida_mcp",
+                        "command.py",
+                    ),
+                )
+                plugin_runtime._info(
+                    "HCLI companion commands ready: "
+                    + ", ".join(os.path.basename(str(path)) for path in launchers)
+                )
+            except Exception as exc:
+                plugin_runtime._warn(f"Could not install HCLI companion commands: {exc}")
         else:
             plugin_runtime._warn(
                 "IDAPython interpreter could not be resolved yet; "
