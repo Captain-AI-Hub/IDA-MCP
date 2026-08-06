@@ -25,6 +25,7 @@ if IDA_MCP_ROOT not in sys.path:
 from ida_mcp import config
 from ida_mcp import instance_registry
 from ida_mcp import instance_server
+from ida_mcp import plugin_runtime
 from ida_mcp import registry
 from ida_mcp import registry_routes
 from ida_mcp import registry_server
@@ -778,6 +779,18 @@ class TestRegistryStartup:
         fake_config = {"enable_gateway": True}
         with patch("ida_mcp.config.load_config", return_value=fake_config):
             assert config.is_gateway_enabled() is True
+
+    def test_plugin_preflight_uses_configured_request_timeout(self, monkeypatch):
+        seen = {}
+        monkeypatch.setattr(plugin_runtime, "get_request_timeout", lambda: 30)
+        monkeypatch.setattr(
+            plugin_runtime.registry,
+            "ensure_registry_server",
+            lambda startup_timeout: seen.setdefault("timeout", startup_timeout) or True,
+        )
+
+        assert plugin_runtime._ensure_gateway_ready_for_startup() is True
+        assert seen["timeout"] == 30.0
 
     def test_instance_startup_checks_gateway_before_listener_launch(self, monkeypatch):
         """实例启动必须先完成 gateway preflight，再启动 listener。"""

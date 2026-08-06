@@ -27,7 +27,7 @@
         "email": "97788570+jelasin@users.noreply.github.com"
       }
     ],
-    "idaVersions": ">=8.4",
+    "idaVersions": ">=9.0",
     "pythonDependencies": [
       "fastmcp",
       "starlette",

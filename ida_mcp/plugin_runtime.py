@@ -14,6 +14,7 @@ from ida_mcp.config import (
     get_http_path,
     get_http_port,
     get_ida_default_port,
+    get_request_timeout,
     is_gateway_enabled,
 )
 from ida_mcp.heartbeat import (
@@ -146,10 +147,12 @@ def _ensure_gateway_ready_for_startup() -> bool:
     """Confirm the standalone gateway is healthy before exposing the instance listener."""
     gateway_host = get_gateway_internal_host()
     gateway_port = get_gateway_internal_port()
+    startup_timeout = max(float(get_request_timeout()), 8.0)
     _info(
-        f"Checking gateway health at {gateway_host}:{gateway_port} before starting instance MCP listener."
+        f"Checking gateway health at {gateway_host}:{gateway_port} before starting "
+        f"instance MCP listener (timeout={startup_timeout:.0f}s)."
     )
-    if registry.ensure_registry_server():
+    if registry.ensure_registry_server(startup_timeout=startup_timeout):
         _info(
             f"Gateway is healthy at {gateway_host}:{gateway_port}; continuing instance startup."
         )
