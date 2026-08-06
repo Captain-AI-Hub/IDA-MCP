@@ -176,8 +176,10 @@ hcli plugin config IDA-MCP set gateway stop
 hcli plugin config IDA-MCP set gateway restart
 ```
 
-IDA-MCP resets the `gateway` setting to `idle` before executing the requested
-action. The command is consumed by a lightweight watcher in the IDA plugin. If
+The `gateway` setting defaults to `start`, so a fresh installation requests a
+gateway start when IDA-MCP first loads. IDA-MCP resets the setting to `idle`
+before executing each requested action. The command is consumed by a lightweight
+watcher in the IDA plugin. If
 IDA is not currently running, the action remains stored and is executed the next
 time IDA-MCP loads. Start and restart use the configured `request_timeout`.
 
