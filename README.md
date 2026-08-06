@@ -164,42 +164,31 @@ gh workflow run package-hcli.yml -f release_tag=v0.6.0
 The archive deliberately places `ida-plugin.json` at the ZIP root, which is the
 layout required for HCLI URL installation.
 
-## Gateway And CLI
+## Gateway Control Through HCLI
 
-IDA-MCP installs companion commands beside the standalone `hcli` executable.
-When installation uses `scripts/hcli_install.py`, they are created immediately;
-for direct URL installations, they are created on the first IDA-MCP load.
-
-Use the short gateway command for frequent lifecycle and status checks:
+Gateway lifecycle actions use HCLI's existing cross-platform plugin config
+command, so no `.cmd`, shell script, PATH modification, or HCLI extension is
+required:
 
 ```bash
-hcli-gateway status
-hcli-gateway start
-hcli-gateway stop
-hcli-gateway restart
+hcli plugin config IDA-MCP set gateway start
+hcli plugin config IDA-MCP set gateway stop
+hcli plugin config IDA-MCP set gateway restart
 ```
 
-The start and restart commands use the configured `request_timeout` when
-`--timeout` is omitted, allowing enough time for a cold FastMCP startup. Pass an
-explicit timeout when needed:
+IDA-MCP resets the `gateway` setting to `idle` before executing the requested
+action. The command is consumed by a lightweight watcher in the IDA plugin. If
+IDA is not currently running, the action remains stored and is executed the next
+time IDA-MCP loads. Start and restart use the configured `request_timeout`.
+
+The standalone `command.py` remains available for complete lifecycle, instance,
+tool, and resource operations:
 
 ```bash
-hcli-gateway restart --timeout 60
+python ida_mcp/command.py gateway status
+python ida_mcp/command.py ida list
+python ida_mcp/command.py tool call get_metadata --port 10000
 ```
-
-Use `hcli-ida-mcp` for the complete `command.py` command surface:
-
-```bash
-hcli-ida-mcp gateway status --json
-hcli-ida-mcp ida list
-hcli-ida-mcp ida open ./target.exe
-hcli-ida-mcp tool call get_metadata --port 10000
-hcli-ida-mcp resource list --port 10000
-```
-
-The launchers use the detected IDAPython executable and the `command.py` from
-the HCLI-installed plugin directory. If launcher creation is unavailable, invoke
-`ida_mcp/command.py` directly with that Python interpreter.
 
 Default endpoints:
 

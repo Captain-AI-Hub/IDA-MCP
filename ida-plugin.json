@@ -37,6 +37,21 @@
     ],
     "settings": [
       {
+        "key": "gateway",
+        "type": "string",
+        "required": false,
+        "default": "idle",
+        "name": "Gateway lifecycle action",
+        "documentation": "Set with HCLI to idle, start, stop, or restart. IDA-MCP consumes the action and resets it to idle.",
+        "choices": [
+          "idle",
+          "start",
+          "stop",
+          "restart"
+        ],
+        "prompt": false
+      },
+      {
         "key": "gateway_token",
         "type": "string",
         "required": false,

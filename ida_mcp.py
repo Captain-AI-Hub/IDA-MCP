@@ -110,6 +110,11 @@ import idaapi  # type: ignore
 import ida_kernwin  # type: ignore
 
 from ida_mcp import plugin_runtime
+from ida_mcp.hcli_gateway_actions import (
+    get_pending_gateway_action,
+    start_gateway_action_watcher,
+    stop_gateway_action_watcher,
+)
 from ida_mcp.config import (
     get_http_url,
     get_ida_default_port,
@@ -217,24 +222,17 @@ class IDAMCPPlugin(idaapi.plugin_t if idaapi else object):  # type: ignore
             return idaapi.PLUGIN_SKIP if idaapi else 0
 
         runtime_settings = initialize_runtime_settings()
+        pending_gateway_action = get_pending_gateway_action(
+            warn=plugin_runtime._warn,
+        )
+        start_gateway_action_watcher(
+            info=plugin_runtime._info,
+            warn=plugin_runtime._warn,
+            error=plugin_runtime._error,
+        )
         detected_python = runtime_settings.get("ida_python")
         if detected_python:
             plugin_runtime._info(f"Effective IDAPython interpreter: {detected_python}")
-            try:
-                launchers = install_hcli_launchers(
-                    python_executable=detected_python,
-                    command_script=os.path.join(
-                        os.path.dirname(os.path.abspath(__file__)),
-                        "ida_mcp",
-                        "command.py",
-                    ),
-                )
-                plugin_runtime._info(
-                    "HCLI companion commands ready: "
-                    + ", ".join(os.path.basename(str(path)) for path in launchers)
-                )
-            except Exception as exc:
-                plugin_runtime._warn(f"Could not install HCLI companion commands: {exc}")
         else:
             plugin_runtime._warn(
                 "IDAPython interpreter could not be resolved yet; "
@@ -266,7 +264,10 @@ class IDAMCPPlugin(idaapi.plugin_t if idaapi else object):  # type: ignore
                     plugin_runtime._info(f"Generated gateway token: {generated_token}")
 
         bootstrap_auto_start = os.getenv("IDA_MCP_AUTO_START") == "1"
-        if bootstrap_auto_start or is_auto_start_enabled():
+        suppress_auto_start = bool(
+            pending_gateway_action == "stop"
+        )
+        if not suppress_auto_start and (bootstrap_auto_start or is_auto_start_enabled()):
             reason = (
                 "IDA_MCP_AUTO_START=1"
                 if bootstrap_auto_start
@@ -285,6 +286,10 @@ class IDAMCPPlugin(idaapi.plugin_t if idaapi else object):  # type: ignore
 
             t = threading.Thread(target=_auto, daemon=True)
             t.start()
+        elif suppress_auto_start:
+            plugin_runtime._info(
+                "Instance auto-start suppressed by pending HCLI gateway stop action."
+            )
         else:
             # 不自动启动, 等待用户菜单/快捷方式显式触发。
             plugin_runtime._info("Plugin initialized and ready (not auto-starting).")
@@ -321,6 +326,7 @@ class IDAMCPPlugin(idaapi.plugin_t if idaapi else object):  # type: ignore
 
     def term(self):  # type: ignore
         plugin_runtime._info("Plugin terminating.")
+        stop_gateway_action_watcher()
         if plugin_runtime.is_running():
             plugin_runtime.stop_server()
 
