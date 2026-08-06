@@ -35,6 +35,37 @@ Requirements:
 
 - Python > 3.11
 
+### Install with HCLI
+
+Install the latest repository snapshot directly with [HCLI](https://hcli.docs.hex-rays.com/):
+
+```bash
+hcli plugin install https://github.com/Captain-AI-Hub/IDA-MCP/archive/refs/heads/main.zip
+```
+
+To install from a local clone instead, run:
+
+```bash
+hcli plugin install .
+```
+
+For plugin development, use `hcli plugin install --editable .` so source changes
+are picked up without reinstalling. HCLI installs the plugin files and the Python
+runtime dependencies declared in `ida-plugin.json`.
+
+After installation, set a non-empty `gateway_token` in the installed
+`ida_mcp/config.conf`; the gateway intentionally refuses requests while the
+token is empty. Generate a suitable token with:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+Also set `ida_path` and `ida_python` there if you want the standalone CLI to open
+IDA databases automatically.
+
+### Install with the interactive installer
+
 Run the interactive installer from the repository root:
 
 ```bash
