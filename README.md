@@ -153,8 +153,9 @@ per-instance MCP server automatically when the gateway is enabled.
 as an Actions artifact. Release-triggered runs also attach `main.zip` to that
 Release.
 
-To attach the package to an already-published Release such as `v0.6.0`, push the
-workflow first and run:
+To attach the package to a Release such as `v0.6.0`, push the workflow first and
+run the command below. If that Release does not exist, the workflow creates it at
+the dispatched commit before uploading `main.zip`:
 
 ```bash
 gh workflow run package-hcli.yml -f release_tag=v0.6.0
