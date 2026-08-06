@@ -32,8 +32,12 @@ General config:
 
 from __future__ import annotations
 
+import json
 import os
-from typing import Any, Dict
+import re
+import secrets
+import sys
+from typing import Any, Dict, Mapping
 
 # config file path
 _CONFIG_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -63,6 +67,25 @@ _DEFAULT_CONFIG = {
     "request_timeout": 30,
     "debug": False,
 }
+
+# HCLI-managed settings. HCLI stores these in ida-config.json and the
+# ida-settings package exposes them while the plugin is running inside IDA.
+_HCLI_SETTING_KEYS = (
+    "gateway_token",
+    "ida_path",
+    "ida_python",
+    "auto_start",
+    "enable_unsafe",
+    "open_in_ida_autonomous",
+    "http_host",
+    "http_port",
+    "http_path",
+    "request_timeout",
+    "debug",
+)
+_ENV_PREFIX = "IDA_MCP_CONFIG_"
+_AUTO_TOKEN_SENTINEL = "__AUTO_GENERATE_GATEWAY_TOKEN__"
+_AUTO_PYTHON_SENTINELS = {"auto", "detect", "auto-detect"}
 
 # cached configuration
 _cached_config: Dict[str, Any] | None = None
@@ -170,8 +193,161 @@ def parse_config_file(path: str) -> Dict[str, Any]:
     return config
 
 
+def _environment_overrides() -> Dict[str, Any]:
+    """Read settings forwarded to the standalone gateway process."""
+    overrides: Dict[str, Any] = {}
+    for key in _HCLI_SETTING_KEYS:
+        value = os.environ.get(f"{_ENV_PREFIX}{key.upper()}")
+        if value is not None:
+            overrides[key] = _parse_value(value)
+    return overrides
+
+
+def _hcli_setting_overrides() -> Dict[str, Any]:
+    """Read HCLI settings when called from an installed IDA plugin."""
+    try:
+        import ida_settings  # type: ignore
+    except (ImportError, ModuleNotFoundError):
+        return {}
+
+    overrides: Dict[str, Any] = {}
+    for key in _HCLI_SETTING_KEYS:
+        try:
+            value = ida_settings.get_current_plugin_setting(key)
+        except (KeyError, RuntimeError, ValueError, OSError):
+            continue
+        except Exception:
+            # Configuration must remain usable if ida-settings changes or is
+            # unavailable in a standalone child process.
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        overrides[key] = value
+    return overrides
+
+
+
+def _set_hcli_setting(key: str, value: str | bool) -> bool:
+    """Persist a setting through HCLI's shared ida-config.json store."""
+    try:
+        import ida_settings  # type: ignore
+
+        ida_settings.set_current_plugin_setting(key, value)
+        return True
+    except Exception:
+        return False
+
+
+def _write_config_string(key: str, value: str) -> bool:
+    """Fallback persistence for non-HCLI/manual plugin installations."""
+    try:
+        with open(_CONFIG_FILE, "r", encoding="utf-8", newline="") as handle:
+            lines = handle.readlines()
+    except OSError:
+        return False
+
+    encoded = json.dumps(value, ensure_ascii=False)
+    replaced = False
+    output: list[str] = []
+    for line in lines:
+        ending = "\r\n" if line.endswith("\r\n") else "\n" if line.endswith("\n") else ""
+        body = line[: -len(ending)] if ending else line
+        stripped = body.lstrip()
+        if not replaced and re.match(rf"^{re.escape(key)}\s*=", stripped):
+            indent = body[: len(body) - len(stripped)]
+            _value, comment = _split_value_and_comment(stripped.split("=", 1)[1])
+            suffix = f" {comment}" if comment else ""
+            output.append(f"{indent}{key} = {encoded}{suffix}{ending}")
+            replaced = True
+        else:
+            output.append(line)
+
+    if not replaced:
+        output.append(f"{key} = {encoded}\n")
+    try:
+        with open(_CONFIG_FILE, "w", encoding="utf-8", newline="") as handle:
+            handle.writelines(output)
+        return True
+    except OSError:
+        return False
+
+
+def _persist_string_setting(key: str, value: str) -> bool:
+    return _set_hcli_setting(key, value) or _write_config_string(key, value)
+
+
+def _detect_running_ida_python() -> str | None:
+    """Resolve the Python executable backing the current IDAPython runtime."""
+    candidates: list[str] = []
+    for prefix in (
+        getattr(sys, "exec_prefix", None),
+        getattr(sys, "base_prefix", None),
+        getattr(sys, "prefix", None),
+    ):
+        if not prefix:
+            continue
+        if os.name == "nt":
+            candidates.append(os.path.join(prefix, "python.exe"))
+        else:
+            candidates.extend(
+                [
+                    os.path.join(prefix, "bin", "python3"),
+                    os.path.join(prefix, "bin", "python"),
+                ]
+            )
+
+    executable = getattr(sys, "executable", "")
+    if executable and os.path.basename(executable).lower().startswith("python"):
+        candidates.append(executable)
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        normalized = os.path.normcase(os.path.abspath(candidate))
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        if os.path.isfile(candidate):
+            return os.path.abspath(candidate)
+    return None
+
+
+def initialize_runtime_settings() -> Dict[str, Any]:
+    """Generate first-run secrets and resolve machine-specific HCLI settings."""
+    global _cached_config
+
+    config = load_config(reload=True)
+    result: Dict[str, Any] = {
+        "gateway_token": None,
+        "gateway_token_generated": False,
+        "ida_python": None,
+        "ida_python_detected": False,
+    }
+
+    raw_token = config.get("gateway_token")
+    token = raw_token.strip() if isinstance(raw_token, str) else ""
+    if not token or token == _AUTO_TOKEN_SENTINEL:
+        token = secrets.token_urlsafe(32)
+        if _persist_string_setting("gateway_token", token):
+            result["gateway_token_generated"] = True
+    result["gateway_token"] = token
+
+    raw_python = config.get("ida_python")
+    python_value = raw_python.strip() if isinstance(raw_python, str) else ""
+    if not python_value or python_value.lower() in _AUTO_PYTHON_SENTINELS:
+        detected = _detect_running_ida_python()
+        if detected:
+            python_value = detected
+            if _persist_string_setting("ida_python", detected):
+                result["ida_python_detected"] = True
+    result["ida_python"] = python_value or None
+
+    _cached_config = None
+    load_config(reload=True)
+    return result
+
+
 def load_config(reload: bool = False) -> Dict[str, Any]:
-    """Load the configuration file."""
+    """Load config.conf, gateway environment, and HCLI settings."""
     global _cached_config
 
     if _cached_config is not None and not reload:
@@ -179,8 +355,28 @@ def load_config(reload: bool = False) -> Dict[str, Any]:
 
     config = dict(_DEFAULT_CONFIG)
     config.update(parse_config_file(_CONFIG_FILE))
+    config.update(_environment_overrides())
+    config.update(_hcli_setting_overrides())
     _cached_config = config
     return config
+
+
+def build_subprocess_environment(
+    base: Mapping[str, str] | None = None,
+) -> Dict[str, str]:
+    """Forward effective HCLI settings to the standalone gateway process."""
+    environment = dict(os.environ if base is None else base)
+    config = load_config()
+    for key in _HCLI_SETTING_KEYS:
+        value = config.get(key)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            continue
+        if isinstance(value, bool):
+            serialized = "true" if value else "false"
+        else:
+            serialized = str(value)
+        environment[f"{_ENV_PREFIX}{key.upper()}"] = serialized
+    return environment
 
 
 # ============================================================================
@@ -252,7 +448,7 @@ def get_gateway_token() -> str | None:
     token = config.get("gateway_token")
     if isinstance(token, str):
         token = token.strip()
-        if token:
+        if token and token != _AUTO_TOKEN_SENTINEL:
             return token
     return None
 
@@ -305,7 +501,7 @@ def get_ida_python() -> str | None:
 
     if isinstance(path, str):
         path = path.strip()
-        if path:
+        if path and path.lower() not in _AUTO_PYTHON_SENTINELS:
             return path
     return None
 

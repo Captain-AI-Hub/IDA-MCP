@@ -1,0 +1,88 @@
+name: Package HCLI plugin
+
+on:
+  push:
+    branches:
+      - main
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Optional existing release tag to receive main.zip (for example v0.6.0)
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: package-hcli-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Build HCLI archive
+        run: python scripts/package_hcli.py --output dist/main.zip
+
+      - name: Verify archive layout
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import zipfile
+          from pathlib import Path
+
+          archive = Path("dist/main.zip")
+          with zipfile.ZipFile(archive) as zf:
+              names = set(zf.namelist())
+              assert "ida-plugin.json" in names
+              assert "ida_mcp.py" in names
+              assert "ida_mcp/__init__.py" in names
+              assert not any(name.startswith("IDA-MCP-") for name in names)
+              manifest = json.loads(zf.read("ida-plugin.json"))
+              print(f"Verified {manifest['plugin']['name']}=={manifest['plugin']['version']}")
+          PY
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ida-mcp-hcli-${{ github.sha }}
+          path: dist/main.zip
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Select release tag
+        id: release
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ inputs.release_tag }}
+        run: |
+          tag=""
+          if [[ "$EVENT_NAME" == "release" ]]; then
+            tag="$RELEASE_TAG"
+          elif [[ -n "$INPUT_TAG" ]]; then
+            tag="$INPUT_TAG"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Upload main.zip to GitHub Release
+        if: steps.release.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: gh release upload "$RELEASE_TAG" dist/main.zip --clobber

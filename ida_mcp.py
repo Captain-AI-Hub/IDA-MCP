@@ -111,8 +111,10 @@ import ida_kernwin  # type: ignore
 
 from ida_mcp import plugin_runtime
 from ida_mcp.config import (
+    get_http_url,
     get_ida_default_port,
     get_ida_host,
+    initialize_runtime_settings,
     is_auto_start_enabled,
     is_gateway_enabled,
 )
@@ -213,6 +215,40 @@ class IDAMCPPlugin(idaapi.plugin_t if idaapi else object):  # type: ignore
         if idaapi is None:
             plugin_runtime._warn("Outside IDA environment; plugin inactive.")
             return idaapi.PLUGIN_SKIP if idaapi else 0
+
+        runtime_settings = initialize_runtime_settings()
+        detected_python = runtime_settings.get("ida_python")
+        if detected_python:
+            plugin_runtime._info(f"Effective IDAPython interpreter: {detected_python}")
+        else:
+            plugin_runtime._warn(
+                "IDAPython interpreter could not be resolved yet; "
+                "the gateway launcher will retry at startup."
+            )
+        plugin_runtime._info(f"Effective gateway MCP endpoint: {get_http_url()}")
+
+        if runtime_settings.get("gateway_token_generated"):
+            generated_token = str(runtime_settings.get("gateway_token") or "")
+            retrieve_command = "hcli plugin config IDA-MCP get gateway_token"
+            plugin_runtime._info(
+                "Generated and saved a random gateway token. "
+                f"Retrieve it later with: {retrieve_command}"
+            )
+            is_batch = bool(getattr(getattr(idaapi, "cvar", None), "batch", False))
+            if is_batch:
+                plugin_runtime._info(f"Generated gateway token: {generated_token}")
+            elif ida_kernwin is not None:
+                try:
+                    ida_kernwin.info(
+                        "IDA-MCP generated a random gateway token and saved it "
+                        "to the HCLI settings store.\n\n"
+                        f"Gateway endpoint: {get_http_url()}\n"
+                        f"IDAPython: {detected_python or 'auto-detect pending'}\n\n"
+                        f"Gateway token:\n{generated_token}\n\n"
+                        f"Retrieve it later with:\n{retrieve_command}"
+                    )
+                except Exception:
+                    plugin_runtime._info(f"Generated gateway token: {generated_token}")
 
         bootstrap_auto_start = os.getenv("IDA_MCP_AUTO_START") == "1"
         if bootstrap_auto_start or is_auto_start_enabled():

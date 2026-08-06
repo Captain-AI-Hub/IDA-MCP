@@ -17,6 +17,7 @@ import urllib.request
 from typing import Any, Dict, List, Optional
 
 from .config import (
+    build_subprocess_environment,
     get_http_bind_host,
     get_ida_python,
     get_gateway_internal_host,
@@ -106,6 +107,7 @@ def _spawn_detached(args: List[str], cwd: str, log_path: Optional[str] = None) -
         "stdout": log_handle if log_handle is not None else subprocess.DEVNULL,
         "stderr": log_handle if log_handle is not None else subprocess.DEVNULL,
         "close_fds": True if os.name != "nt" else False,
+        "env": build_subprocess_environment(),
     }
     if os.name == "nt":
         creationflags = 0
