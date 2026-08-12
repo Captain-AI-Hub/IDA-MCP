@@ -56,8 +56,8 @@ The wrapper asks for or detects the IDA executable, probes that installation's
 `idat` runtime, and falls back to parsing `idapyswitch` only when the runtime
 probe is unavailable. It then sets `HCLI_CURRENT_IDA_PYTHON_EXE` while launching
 HCLI, so dependency installation cannot fall back to HCLI's/system Python. The
-HCLI prompt therefore shows the actual interpreter in both the label and default,
-for example:
+wrapper uses the detected interpreter internally; the direct HCLI install does
+not prompt for or overwrite `ida_python`:
 
 ```text
 IDAPython interpreter path (C:\Users\name\AppData\Local\Python\pythoncore-3.12-64\python.exe)
@@ -81,8 +81,10 @@ HCLI_CURRENT_IDA_PYTHON_EXE=/path/to/idapython/bin/python3 \
 
 If IDAPython cannot be detected, `scripts/hcli_install.py` stops instead of
 allowing dependency installation through the system Python. The wrapper also
-generates a per-install gateway token and prints a copy/paste-ready `mcp.json`
-configuration after HCLI completes.
+generates a per-install token and prints a copy/paste-ready `mcp.json`. This does
+not apply to the direct URL form: `hcli plugin install ...` does not execute
+IDA-MCP, so it cannot generate or print a machine-specific token during
+installation.
 
 For plugin development, use `hcli plugin install --editable .` so source changes
 are picked up without reinstalling. HCLI installs the plugin files and Python
@@ -90,18 +92,23 @@ runtime dependencies declared in `ida-plugin.json`. Dependency resolution can
 take a while on the first installation and may produce little output; wait for
 the final `Installed plugin` message.
 
-Starting with v0.6.1, HCLI prompts for the IDA paths, gateway host, port and
-path, request timeout, automatic startup, autonomous launch mode, unsafe-tool
-policy, and debug logging. A portable Release ZIP has static metadata and cannot
-embed a path from the destination machine. Direct URL installation therefore
-uses `ida_python=auto` and reports the resolved path on first IDA launch. Use
-`scripts/hcli_install.py` when the actual detected path must appear during the
-HCLI installation prompts.
+Starting with v0.6.2, HCLI prompts for the IDA executable path, gateway
+host, port and path, request timeout, autonomous launch mode, unsafe-tool policy,
+and debug logging. The IDAPython path is deliberately not prompted: IDA-MCP
+resolves it from the running IDA process on first launch. Automatic instance
+MCP startup is disabled by default and is not prompted during installation;
+enable it later with `hcli plugin config IDA-MCP set auto_start true` if needed.
+A portable Release ZIP has static metadata and cannot embed a path from the
+destination machine.
 
-The gateway token is not shared in the package and is not requested during a new
-installation. On first IDA launch, IDA-MCP generates a random per-machine token,
-saves it through `ida-settings`, and displays it once together with the effective
-gateway endpoint and detected IDAPython path. To review or change the settings
+The gateway token is not shared in the package and cannot be printed by
+`hcli plugin install`, because HCLI installs metadata and files without loading
+IDA-MCP. On first IDA launch, IDA-MCP generates a random per-machine token,
+saves it through `ida-settings` when available, and always prints/displays it
+once together with the effective gateway endpoint and detected IDAPython path.
+If IDA-MCP has not been loaded in IDA yet, `hcli plugin config IDA-MCP get
+gateway_token` will still return the installation sentinel rather than a usable
+token. To review or change the settings
 later, run:
 
 ```bash
@@ -171,12 +178,12 @@ per-instance MCP server automatically when the gateway is enabled.
 as an Actions artifact. Release-triggered runs also attach `main.zip` to that
 Release.
 
-To attach the package to a Release such as `v0.6.1`, push the workflow first and
+To attach the package to a Release such as `v0.6.2`, push the workflow first and
 run the command below. If that Release does not exist, the workflow creates it at
 the dispatched commit before uploading `main.zip`:
 
 ```bash
-gh workflow run package-hcli.yml -f release_tag=v0.6.1
+gh workflow run package-hcli.yml -f release_tag=v0.6.2
 ```
 
 The archive deliberately places `ida-plugin.json` at the ZIP root, which is the

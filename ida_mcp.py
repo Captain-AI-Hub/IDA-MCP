@@ -246,7 +246,7 @@ class IDAMCPPlugin(idaapi.plugin_t if idaapi else object):  # type: ignore
             generated_token = str(runtime_settings.get("gateway_token") or "")
             retrieve_command = "hcli plugin config IDA-MCP get gateway_token"
             plugin_runtime._info(
-                "Generated and saved a random gateway token. "
+                "Generated a random gateway token on first IDA-MCP launch. "
                 f"Retrieve it later with: {retrieve_command}"
             )
             plugin_runtime._info(

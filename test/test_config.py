@@ -137,3 +137,20 @@ def test_get_mcp_client_config_includes_url_and_token_headers():
             }
         }
     }
+
+
+def test_initialize_runtime_settings_reports_generated_token_when_persistence_fails():
+    with patch.object(
+        config,
+        "load_config",
+        return_value={"gateway_token": config._AUTO_TOKEN_SENTINEL, "ida_python": "auto"},
+    ):
+        with patch.object(config.secrets, "token_urlsafe", return_value="generated-token-with-enough-entropy"):
+            with patch.object(config, "_detect_running_ida_python", return_value=None):
+                with patch.object(config, "_persist_string_setting", return_value=False):
+                    result = config.initialize_runtime_settings()
+
+    assert result["gateway_token"] == "generated-token-with-enough-entropy"
+    assert result["gateway_token_generated"] is True
+    assert config._cached_config["gateway_token"] == "generated-token-with-enough-entropy"
+    _reset_config_cache()

@@ -327,8 +327,11 @@ def initialize_runtime_settings() -> Dict[str, Any]:
     token = raw_token.strip() if isinstance(raw_token, str) else ""
     if not token or token == _AUTO_TOKEN_SENTINEL:
         token = secrets.token_urlsafe(32)
-        if _persist_string_setting("gateway_token", token):
-            result["gateway_token_generated"] = True
+        # The token must be displayed on the first IDA launch even when the
+        # HCLI settings store is unavailable. Persistence is best-effort; the
+        # generated value is still the effective runtime credential.
+        result["gateway_token_generated"] = True
+        _persist_string_setting("gateway_token", token)
     result["gateway_token"] = token
 
     raw_python = config.get("ida_python")
@@ -342,7 +345,26 @@ def initialize_runtime_settings() -> Dict[str, Any]:
     result["ida_python"] = python_value or None
 
     _cached_config = None
-    load_config(reload=True)
+    effective = load_config(reload=True)
+    # Keep generated/detected values effective for this IDA process even when
+    # persistence is unavailable. Child gateway processes receive them through
+    # build_subprocess_environment(). A later IDA launch will retry persistence.
+    effective_token = effective.get("gateway_token")
+    if (
+        result["gateway_token_generated"]
+        and (
+            not isinstance(effective_token, str)
+            or not effective_token.strip()
+            or effective_token.strip() == _AUTO_TOKEN_SENTINEL
+        )
+    ):
+        effective["gateway_token"] = token
+    if python_value and (
+        not raw_python
+        or str(raw_python).strip().lower() in _AUTO_PYTHON_SENTINELS
+    ):
+        effective["ida_python"] = python_value
+    _cached_config = effective
     return result
 
 

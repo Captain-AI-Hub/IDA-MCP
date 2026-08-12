@@ -8,7 +8,7 @@ from .api_loader import ensure_api_modules_loaded
 from .config import get_server_name
 from .rpc import get_resources, get_tool_specs
 
-__version__ = "0.6.1"
+__version__ = "0.6.2"
 
 
 def create_mcp_server(

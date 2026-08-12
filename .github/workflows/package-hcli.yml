@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Optional existing release tag to receive main.zip (for example v0.6.1)
+        description: Optional existing release tag to receive main.zip (for example v0.6.2)
         required: false
         type: string
 
