@@ -100,38 +100,170 @@ can be wrong for non-standard IDA layouts. `auto_start` is also prompted and
 defaults to `No`. The hidden gateway lifecycle action defaults to `idle`, so a
 fresh installation performs no server startup unless requested.
 
-The gateway token is not shared in the package and cannot be printed by
-`hcli plugin install`, because HCLI installs metadata and files without loading
-IDA-MCP. On first IDA launch, IDA-MCP generates a random per-machine token,
-saves it through `ida-settings` when available, and always prints/displays it
-once together with the effective gateway endpoint and detected IDAPython path.
-If IDA-MCP has not been loaded in IDA yet, `hcli plugin config IDA-MCP get
-gateway_token` will still return the installation sentinel rather than a usable
-token. To review or change the settings
-later, run:
+## Get the gateway token and configure an MCP client
 
-```bash
-hcli plugin config IDA-MCP setup
-```
+`hcli plugin install` only installs the plugin metadata, files, and Python
+dependencies. It does not load IDA-MCP, so the install command cannot generate
+or print the machine-specific gateway token.
 
-Retrieve the generated token later with:
+### 1. Generate the token on the first IDA launch
+
+After installation:
+
+1. Start IDA and open a database.
+2. Wait for IDA-MCP to load.
+3. On its first load, IDA-MCP generates a random gateway token and shows it in
+   the IDA output window and, in interactive mode, a dialog.
+4. Copy the displayed token and the generated MCP client configuration.
+
+Retrieve a previously generated token with:
 
 ```bash
 hcli plugin config IDA-MCP get gateway_token
 ```
 
-Manually supplied replacement tokens must contain at least 20 characters. Existing
-non-empty tokens are preserved during upgrades. To test first-run generation after
-upgrading an existing installation, remove the old token and reset Python detection:
+If this command returns `__AUTO_GENERATE_GATEWAY_TOKEN__`, IDA-MCP has not
+completed first-launch initialization, or it could not write to the HCLI
+settings store. Start IDA and check the IDA output window. If IDA-MCP reports
+that it saved the token to `ida_mcp/config.conf`, use the token displayed in IDA
+or read it from that installed plugin configuration file.
+
+To set your own token, use a random value of at least 20 characters:
+
+```bash
+hcli plugin config IDA-MCP set gateway_token YOUR_RANDOM_TOKEN
+```
+
+Do not commit a real gateway token to a repository or paste it into public logs.
+
+### 2. Start IDA-MCP when automatic startup is disabled
+
+`auto_start` defaults to `No`. Open the target database and run the IDA-MCP
+plugin once from IDA to start its instance server. Start the standalone gateway
+with:
+
+```bash
+hcli plugin config IDA-MCP set gateway start
+```
+
+To enable automatic instance startup later:
+
+```bash
+hcli plugin config IDA-MCP set auto_start true
+```
+
+The default gateway MCP endpoint is:
+
+```text
+http://127.0.0.1:11338/mcp
+```
+
+If you changed `http_host`, `http_port`, or `http_path` during installation,
+use those values instead.
+
+### 3. Claude Code and Cursor `mcpServers` format
+
+Claude Code project configuration uses `.mcp.json` in the project root. Cursor
+uses `.cursor/mcp.json` for a project or `~/.cursor/mcp.json` globally. These
+clients use the common top-level `mcpServers` object:
+
+```json
+{
+  "mcpServers": {
+    "ida-mcp": {
+      "type": "http",
+      "url": "http://127.0.0.1:11338/mcp",
+      "headers": {
+        "Authorization": "Bearer REPLACE_WITH_GATEWAY_TOKEN"
+      }
+    }
+  }
+}
+```
+
+IDA-MCP also accepts the following header as an alternative:
+
+```json
+{
+  "X-IDA-MCP-Token": "REPLACE_WITH_GATEWAY_TOKEN"
+}
+```
+
+Use one authentication header; `Authorization: Bearer ...` is recommended for
+normal HTTP MCP clients.
+
+For Claude Code, avoid storing the token directly in a project `.mcp.json` by
+using an environment variable. Claude Code expands `${VAR}` in HTTP URLs and
+headers:
+
+```bash
+export IDA_MCP_TOKEN='YOUR_GATEWAY_TOKEN'
+```
+
+```json
+{
+  "mcpServers": {
+    "ida-mcp": {
+      "type": "http",
+      "url": "http://127.0.0.1:11338/mcp",
+      "headers": {
+        "Authorization": "Bearer ${IDA_MCP_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+The equivalent Claude Code CLI command is:
+
+```bash
+claude mcp add --transport http ida-mcp http://127.0.0.1:11338/mcp \
+  --header "Authorization: Bearer $IDA_MCP_TOKEN"
+```
+
+For Cursor, if environment-variable interpolation is unavailable in the client
+version being used, place the literal token only in the personal global file
+`~/.cursor/mcp.json`; do not commit that file.
+
+### 4. VS Code `.vscode/mcp.json` format
+
+VS Code uses a top-level `servers` object rather than `mcpServers`. The example
+below prompts for the token and stores it in VS Code's input/secret flow instead
+of committing it to the workspace file:
+
+```json
+{
+  "inputs": [
+    {
+      "id": "ida-mcp-token",
+      "type": "promptString",
+      "description": "IDA-MCP gateway token",
+      "password": true
+    }
+  ],
+  "servers": {
+    "ida-mcp": {
+      "type": "http",
+      "url": "http://127.0.0.1:11338/mcp",
+      "headers": {
+        "Authorization": "Bearer ${input:ida-mcp-token}"
+      }
+    }
+  }
+}
+```
+
+### 5. Reset first-launch values
+
+To generate a new token and retry IDAPython detection:
 
 ```bash
 hcli plugin config IDA-MCP del gateway_token
 hcli plugin config IDA-MCP set ida_python auto
 ```
 
-Then restart IDA. The plugin displays the generated token, effective gateway URL,
-detected IDAPython executable, and a copy/paste-ready `mcp.json` configuration
-once initialization completes.
+Restart IDA afterward. IDA-MCP displays the new token, effective gateway URL,
+detected IDAPython executable, and a copy/paste-ready MCP configuration.
 
 GitHub's automatically generated `archive/refs/heads/main.zip` source archive is
 not an HCLI single-plugin archive. Use the Release asset above or build the
@@ -167,8 +299,9 @@ IDA's Python environment:
 <ida_python> -m pip install -r requirements.txt
 ```
 
-Open a database in IDA and wait for initial analysis. The plugin starts its
-per-instance MCP server automatically when the gateway is enabled.
+Open a database in IDA and wait for initial analysis. If `auto_start` is
+`false`, run the IDA-MCP plugin once from IDA; otherwise its per-instance MCP
+server starts automatically.
 
 ## HCLI Packaging
 
