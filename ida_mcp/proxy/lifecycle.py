@@ -171,6 +171,12 @@ def _normalize_bundle_dir(candidate: Optional[str]) -> Optional[str]:
     if not local_path:
         return None
 
+    # A Windows drive path can arrive on a Linux/WSL process before the
+    # optional path bridge is applied. Do not reinterpret it as a relative
+    # Linux path (for example ``/repo/D:\ida-mcp``).
+    if os.name != "nt" and _looks_like_windows_drive_path(local_path):
+        return local_path
+
     local_path = os.path.abspath(local_path)
 
     try:

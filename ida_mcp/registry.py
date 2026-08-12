@@ -149,7 +149,15 @@ def _resolve_python_executable() -> str:
     ):
         if not prefix:
             continue
-        if os.name == "nt":
+        # Keep this path-shape based rather than host-platform based. It also
+        # makes configured/tested Windows-style prefixes work when the control
+        # process is running under Linux/WSL.
+        is_windows_prefix = (
+            len(str(prefix)) >= 3
+            and str(prefix)[1] == ":"
+            and str(prefix)[2] in {"\\", "/"}
+        )
+        if os.name == "nt" or is_windows_prefix:
             candidates.append(os.path.join(prefix, "python.exe"))
         else:
             candidates.append(os.path.join(prefix, "bin", "python3"))
