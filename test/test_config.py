@@ -96,12 +96,13 @@ def test_initialize_runtime_settings_generates_token_and_detects_python():
                 "_detect_running_ida_python",
                 return_value=r"C:\Python312\python.exe",
             ):
-                with patch.object(config, "_persist_string_setting", return_value=True) as persist:
+                with patch.object(config, "_persist_string_setting", return_value="hcli") as persist:
                     result = config.initialize_runtime_settings()
 
     assert result == {
         "gateway_token": "generated-token-with-enough-entropy",
         "gateway_token_generated": True,
+        "gateway_token_storage": "hcli",
         "ida_python": r"C:\Python312\python.exe",
         "ida_python_detected": True,
     }
@@ -147,10 +148,43 @@ def test_initialize_runtime_settings_reports_generated_token_when_persistence_fa
     ):
         with patch.object(config.secrets, "token_urlsafe", return_value="generated-token-with-enough-entropy"):
             with patch.object(config, "_detect_running_ida_python", return_value=None):
-                with patch.object(config, "_persist_string_setting", return_value=False):
+                with patch.object(config, "_persist_string_setting", return_value=None):
                     result = config.initialize_runtime_settings()
 
     assert result["gateway_token"] == "generated-token-with-enough-entropy"
     assert result["gateway_token_generated"] is True
     assert config._cached_config["gateway_token"] == "generated-token-with-enough-entropy"
     _reset_config_cache()
+
+
+def test_hcli_token_sentinel_does_not_override_config_file_token():
+    fake_ida_settings = SimpleNamespace(
+        get_current_plugin_setting=lambda key: (
+            config._AUTO_TOKEN_SENTINEL if key == "gateway_token" else ""
+        )
+    )
+
+    with patch.dict(sys.modules, {"ida_settings": fake_ida_settings}):
+        with patch.object(
+            config,
+            "parse_config_file",
+            return_value={"gateway_token": "persisted-config-token"},
+        ):
+            loaded = config.load_config(reload=True)
+
+    assert loaded["gateway_token"] == "persisted-config-token"
+    _reset_config_cache()
+
+
+def test_detect_running_ida_python_supports_prefix_root_python(monkeypatch, tmp_path):
+    prefix = tmp_path / "ida-python"
+    python = prefix / "python"
+    prefix.mkdir()
+    python.write_bytes(b"")
+    monkeypatch.setattr(config.os, "name", "posix")
+    monkeypatch.setattr(config.sys, "exec_prefix", str(prefix))
+    monkeypatch.setattr(config.sys, "base_prefix", str(prefix))
+    monkeypatch.setattr(config.sys, "prefix", str(prefix))
+    monkeypatch.setattr(config.sys, "executable", "/opt/ida/idat")
+
+    assert config._detect_running_ida_python() == str(python.resolve())

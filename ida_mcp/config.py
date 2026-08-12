@@ -220,8 +220,14 @@ def _hcli_setting_overrides() -> Dict[str, Any]:
             # Configuration must remain usable if ida-settings changes or is
             # unavailable in a standalone child process.
             continue
-        if isinstance(value, str) and not value.strip():
-            continue
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                continue
+            # A generated token written to config.conf must beat the packaged
+            # HCLI sentinel when ida-settings is readable but not writable.
+            if key == "gateway_token" and value == _AUTO_TOKEN_SENTINEL:
+                continue
         overrides[key] = value
     return overrides
 
@@ -272,8 +278,13 @@ def _write_config_string(key: str, value: str) -> bool:
         return False
 
 
-def _persist_string_setting(key: str, value: str) -> bool:
-    return _set_hcli_setting(key, value) or _write_config_string(key, value)
+def _persist_string_setting(key: str, value: str) -> str | None:
+    """Persist a string setting and return the successful storage backend."""
+    if _set_hcli_setting(key, value):
+        return "hcli"
+    if _write_config_string(key, value):
+        return "config"
+    return None
 
 
 def _detect_running_ida_python() -> str | None:
@@ -293,6 +304,8 @@ def _detect_running_ida_python() -> str | None:
                 [
                     os.path.join(prefix, "bin", "python3"),
                     os.path.join(prefix, "bin", "python"),
+                    os.path.join(prefix, "python3"),
+                    os.path.join(prefix, "python"),
                 ]
             )
 
@@ -319,6 +332,7 @@ def initialize_runtime_settings() -> Dict[str, Any]:
     result: Dict[str, Any] = {
         "gateway_token": None,
         "gateway_token_generated": False,
+        "gateway_token_storage": None,
         "ida_python": None,
         "ida_python_detected": False,
     }
@@ -331,7 +345,9 @@ def initialize_runtime_settings() -> Dict[str, Any]:
         # HCLI settings store is unavailable. Persistence is best-effort; the
         # generated value is still the effective runtime credential.
         result["gateway_token_generated"] = True
-        _persist_string_setting("gateway_token", token)
+        result["gateway_token_storage"] = _persist_string_setting(
+            "gateway_token", token
+        )
     result["gateway_token"] = token
 
     raw_python = config.get("ida_python")
@@ -340,7 +356,7 @@ def initialize_runtime_settings() -> Dict[str, Any]:
         detected = _detect_running_ida_python()
         if detected:
             python_value = detected
-            if _persist_string_setting("ida_python", detected):
+            if _persist_string_setting("ida_python", detected) is not None:
                 result["ida_python_detected"] = True
     result["ida_python"] = python_value or None
 

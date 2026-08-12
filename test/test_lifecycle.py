@@ -1307,6 +1307,22 @@ class TestRegistryStartup:
 
         assert resolved.lower() == r"d:\portable-python-3.12\python.exe"
 
+    def test_resolve_python_executable_supports_prefix_root_python(self):
+        """Linux IDAPython may place python directly below sys.prefix."""
+        prefix = "/home/ub/ida-pro-9.4/ida-python"
+        with patch("ida_mcp.registry.get_ida_python", return_value=None):
+            with patch.object(registry.os, "name", "posix"):
+                with patch.object(sys, "exec_prefix", prefix):
+                    with patch.object(sys, "base_prefix", prefix):
+                        with patch.object(sys, "prefix", prefix):
+                            with patch(
+                                "os.path.isfile",
+                                side_effect=lambda p: p == f"{prefix}/python",
+                            ):
+                                resolved = registry._resolve_python_executable()
+
+        assert resolved == f"{prefix}/python"
+
     def test_resolve_python_executable_uses_sys_prefix_fallback(self):
         """sys.exec_prefix 不存在时应回退到 sys.base_prefix / sys.prefix。"""
         with patch("ida_mcp.registry.get_ida_python", return_value=None):

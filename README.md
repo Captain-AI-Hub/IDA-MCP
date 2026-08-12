@@ -92,14 +92,13 @@ runtime dependencies declared in `ida-plugin.json`. Dependency resolution can
 take a while on the first installation and may produce little output; wait for
 the final `Installed plugin` message.
 
-Starting with v0.6.2, HCLI prompts for the IDA executable path, gateway
-host, port and path, request timeout, autonomous launch mode, unsafe-tool policy,
-and debug logging. The IDAPython path is deliberately not prompted: IDA-MCP
-resolves it from the running IDA process on first launch. Automatic instance
-MCP startup is disabled by default and is not prompted during installation;
-enable it later with `hcli plugin config IDA-MCP set auto_start true` if needed.
-A portable Release ZIP has static metadata and cannot embed a path from the
-destination machine.
+Starting with v0.6.3, HCLI prompts for the IDA executable, IDAPython
+interpreter, automatic instance startup, gateway host/port/path, autonomous
+launch mode, unsafe-tool policy, request timeout, and debug logging. The
+IDAPython default remains `auto`, but the prompt is retained because detection
+can be wrong for non-standard IDA layouts. `auto_start` is also prompted and
+defaults to `No`. The hidden gateway lifecycle action defaults to `idle`, so a
+fresh installation performs no server startup unless requested.
 
 The gateway token is not shared in the package and cannot be printed by
 `hcli plugin install`, because HCLI installs metadata and files without loading
@@ -178,12 +177,12 @@ per-instance MCP server automatically when the gateway is enabled.
 as an Actions artifact. Release-triggered runs also attach `main.zip` to that
 Release.
 
-To attach the package to a Release such as `v0.6.2`, push the workflow first and
+To attach the package to a Release such as `v0.6.3`, push the workflow first and
 run the command below. If that Release does not exist, the workflow creates it at
 the dispatched commit before uploading `main.zip`:
 
 ```bash
-gh workflow run package-hcli.yml -f release_tag=v0.6.2
+gh workflow run package-hcli.yml -f release_tag=v0.6.3
 ```
 
 The archive deliberately places `ida-plugin.json` at the ZIP root, which is the
@@ -201,10 +200,10 @@ hcli plugin config IDA-MCP set gateway stop
 hcli plugin config IDA-MCP set gateway restart
 ```
 
-The `gateway` setting defaults to `start`, so a fresh installation requests a
-gateway start when IDA-MCP first loads. IDA-MCP resets the setting to `idle`
-before executing each requested action. The command is consumed by a lightweight
-watcher in the IDA plugin. If
+The `gateway` setting defaults to `idle`, so a fresh installation does not
+start the standalone gateway automatically. IDA-MCP resets explicit start, stop,
+or restart requests to `idle` before executing them. The command is consumed by
+a lightweight watcher in the IDA plugin. If
 IDA is not currently running, the action remains stored and is executed the next
 time IDA-MCP loads. Start and restart use the configured `request_timeout`.
 

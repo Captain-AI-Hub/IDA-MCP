@@ -244,11 +244,22 @@ class IDAMCPPlugin(idaapi.plugin_t if idaapi else object):  # type: ignore
 
         if runtime_settings.get("gateway_token_generated"):
             generated_token = str(runtime_settings.get("gateway_token") or "")
+            token_storage = runtime_settings.get("gateway_token_storage")
             retrieve_command = "hcli plugin config IDA-MCP get gateway_token"
+            if token_storage == "hcli":
+                storage_message = "Saved it to the HCLI settings store."
+                retrieval_message = f"Retrieve it later with: {retrieve_command}"
+            elif token_storage == "config":
+                storage_message = "Saved it to ida_mcp/config.conf."
+                retrieval_message = "The HCLI get command may still show the packaged sentinel."
+            else:
+                storage_message = "Could not persist it; it is valid for this IDA process only."
+                retrieval_message = "Copy it now before closing IDA."
             plugin_runtime._info(
                 "Generated a random gateway token on first IDA-MCP launch. "
-                f"Retrieve it later with: {retrieve_command}"
+                + storage_message
             )
+            plugin_runtime._info(retrieval_message)
             plugin_runtime._info(
                 "Copy this MCP client configuration into mcp.json:\n"
                 + json.dumps(get_mcp_client_config(), ensure_ascii=False, indent=2)
@@ -259,12 +270,12 @@ class IDAMCPPlugin(idaapi.plugin_t if idaapi else object):  # type: ignore
             elif ida_kernwin is not None:
                 try:
                     ida_kernwin.info(
-                        "IDA-MCP generated a random gateway token and saved it "
-                        "to the HCLI settings store.\n\n"
+                        "IDA-MCP generated a random gateway token.\n"
+                        f"{storage_message}\n\n"
                         f"Gateway endpoint: {get_http_url()}\n"
                         f"IDAPython: {detected_python or 'auto-detect pending'}\n\n"
                         f"Gateway token:\n{generated_token}\n\n"
-                        f"Retrieve it later with:\n{retrieve_command}"
+                        f"{retrieval_message}"
                     )
                 except Exception:
                     plugin_runtime._info(f"Generated gateway token: {generated_token}")

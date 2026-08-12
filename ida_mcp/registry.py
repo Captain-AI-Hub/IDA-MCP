@@ -6,6 +6,7 @@ import atexit
 import json
 import ntpath
 import os
+import posixpath
 import signal
 import socket
 import subprocess
@@ -161,8 +162,10 @@ def _resolve_python_executable() -> str:
         if os.name == "nt" or is_windows_prefix:
             candidates.append(ntpath.join(prefix, "python.exe"))
         else:
-            candidates.append(os.path.join(prefix, "bin", "python3"))
-            candidates.append(os.path.join(prefix, "bin", "python"))
+            candidates.append(posixpath.join(prefix, "bin", "python3"))
+            candidates.append(posixpath.join(prefix, "bin", "python"))
+            candidates.append(posixpath.join(prefix, "python3"))
+            candidates.append(posixpath.join(prefix, "python"))
 
     seen: set[str] = set()
     for path in candidates:

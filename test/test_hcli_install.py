@@ -180,11 +180,16 @@ def test_reads_selected_ida_from_hcli_config(tmp_path, monkeypatch):
     assert hcli_install._ida_executable_from_hcli_config() == ida_executable.resolve()
 
 
-def test_manifest_does_not_prompt_for_idapython_or_auto_start():
-    manifest = json.loads((Path(__file__).resolve().parents[1] / "ida-plugin.json").read_text(encoding="utf-8"))
+def test_manifest_prompts_for_idapython_and_auto_start_defaults_off():
+    manifest = json.loads(
+        (Path(__file__).resolve().parents[1] / "ida-plugin.json").read_text(
+            encoding="utf-8"
+        )
+    )
     settings = {item["key"]: item for item in manifest["plugin"]["settings"]}
 
+    assert settings["gateway"]["default"] == "idle"
     assert settings["ida_python"]["default"] == "auto"
-    assert settings["ida_python"]["prompt"] is False
+    assert settings["ida_python"]["prompt"] is True
     assert settings["auto_start"]["default"] is False
-    assert settings["auto_start"]["prompt"] is False
+    assert settings["auto_start"]["prompt"] is True

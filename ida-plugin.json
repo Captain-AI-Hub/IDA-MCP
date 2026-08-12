@@ -2,7 +2,7 @@
   "IDAMetadataDescriptorVersion": 1,
   "plugin": {
     "name": "IDA-MCP",
-    "version": "0.6.2",
+    "version": "0.6.3",
     "entryPoint": "ida_mcp.py",
     "urls": {
       "repository": "https://github.com/Captain-AI-Hub/IDA-MCP"
@@ -40,9 +40,9 @@
         "key": "gateway",
         "type": "string",
         "required": false,
-        "default": "start",
+        "default": "idle",
         "name": "Gateway lifecycle action",
-        "documentation": "Defaults to start. Set with HCLI to start, stop, or restart; IDA-MCP consumes the action and resets it to idle.",
+        "documentation": "Set with HCLI to start, stop, or restart; IDA-MCP consumes the action and resets it to idle. No gateway action runs automatically on a fresh install.",
         "choices": [
           "idle",
           "start",
@@ -76,9 +76,9 @@
         "type": "string",
         "required": false,
         "default": "auto",
-        "name": "IDAPython interpreter path (auto-detected from the running IDA process)",
-        "documentation": "Leave as auto. IDA-MCP resolves the interpreter from the running IDA process on first launch and never asks HCLI to guess or prompt for it.",
-        "prompt": false
+        "name": "IDAPython interpreter path",
+        "documentation": "Enter the Python executable used by this IDA installation, or keep auto to resolve it from the running IDA process on first launch.",
+        "prompt": true
       },
       {
         "key": "auto_start",
@@ -86,8 +86,8 @@
         "required": false,
         "default": false,
         "name": "Start MCP automatically",
-        "documentation": "Do not start the IDA-MCP instance server automatically when an IDA database opens.",
-        "prompt": false
+        "documentation": "Start the IDA-MCP instance server automatically when an IDA database opens.",
+        "prompt": true
       },
       {
         "key": "enable_unsafe",
