@@ -119,3 +119,21 @@ def test_initialize_runtime_settings_generates_token_and_detects_python():
 def test_get_ida_python_treats_auto_as_unconfigured():
     with patch.object(config, "load_config", return_value={"ida_python": "auto"}):
         assert config.get_ida_python() is None
+
+
+def test_get_mcp_client_config_includes_url_and_token_headers():
+    with patch.object(config, "get_http_url", return_value="http://127.0.0.1:11338/mcp"):
+        with patch.object(config, "get_gateway_token", return_value="secret-token"):
+            value = config.get_mcp_client_config()
+
+    assert value == {
+        "mcpServers": {
+            "ida-mcp": {
+                "url": "http://127.0.0.1:11338/mcp",
+                "headers": {
+                    "Authorization": "Bearer secret-token",
+                    "X-IDA-MCP-Token": "secret-token",
+                },
+            }
+        }
+    }

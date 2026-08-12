@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Optional existing release tag to receive main.zip (for example v0.6.0)
+        description: Optional existing release tag to receive main.zip (for example v0.6.1)
         required: false
         type: string
 
@@ -33,6 +33,12 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+
+      - name: Install test dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+
+      - name: Run test suite
+        run: python -m pytest -q --basetemp "${{ runner.temp }}/ida-mcp-pytest"
 
       - name: Build HCLI archive
         run: python scripts/package_hcli.py --output dist/main.zip

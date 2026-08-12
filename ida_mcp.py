@@ -65,6 +65,7 @@ bootstrap 环境变量 (launcher 内部使用)
 本文件只包含逻辑入口与生命周期管理, 实际工具定义在 ``ida_mcp/api_*.py`` 模块中。
 """
 
+import json
 import warnings
 
 # 必须在任何可能导入 websockets 的模块之前设置过滤器
@@ -117,6 +118,7 @@ from ida_mcp.hcli_gateway_actions import (
 )
 from ida_mcp.config import (
     get_http_url,
+    get_mcp_client_config,
     get_ida_default_port,
     get_ida_host,
     initialize_runtime_settings,
@@ -246,6 +248,10 @@ class IDAMCPPlugin(idaapi.plugin_t if idaapi else object):  # type: ignore
             plugin_runtime._info(
                 "Generated and saved a random gateway token. "
                 f"Retrieve it later with: {retrieve_command}"
+            )
+            plugin_runtime._info(
+                "Copy this MCP client configuration into mcp.json:\n"
+                + json.dumps(get_mcp_client_config(), ensure_ascii=False, indent=2)
             )
             is_batch = bool(getattr(getattr(idaapi, "cvar", None), "batch", False))
             if is_batch:

@@ -17,6 +17,10 @@ import secrets
 import shutil
 import subprocess
 import sys
+from pathlib import Path
+
+from scripts.ida_python_detection import detect_ida_python as _probe_ida_python
+from scripts.ida_python_detection import parse_idapyswitch_output
 
 # ---------------------------------------------------------------------------
 # i18n
@@ -356,62 +360,42 @@ def _find_plugins_dir(ida_dir: str) -> str | None:
 
 
 def _detect_ida_python(ida_dir: str) -> list[dict[str, str]]:
-    """Run idapyswitch to discover Python installations managed for IDA.
+    """Detect the Python interpreter actually loaded by this IDA installation.
 
-    Returns a list of dicts ``{"dir": ..., "version": ..., "preferred": bool}``
-    sorted with the preferred entry first.
+    ``idat`` is authoritative because it executes the same embedded Python and
+    ``idapythonrc.py`` as the GUI. ``idapyswitch`` remains a platform-aware
+    fallback for older or headless installations.
     """
-    sw_name = "idapyswitch.exe" if sys.platform == "win32" else "idapyswitch"
-    sw_path = os.path.join(ida_dir, sw_name)
-    if not os.path.isfile(sw_path):
-        return []
+    ida_root = Path(ida_dir)
+    ida_candidates = [ida_root / name for name in ("ida64.exe", "ida.exe", "ida64", "ida")]
+    ida_executable = next((candidate for candidate in ida_candidates if candidate.is_file()), None)
+    if ida_executable is not None:
+        detected = _probe_ida_python(ida_executable)
+        if detected:
+            return [{
+                "index": "1",
+                "version": "detected",
+                "dir": str(detected.parent.parent if detected.parent.name in ("bin", "Scripts") else detected.parent),
+                "exe": str(detected),
+            }]
 
+    sw_name = "idapyswitch.exe" if sys.platform == "win32" else "idapyswitch"
+    sw_path = ida_root / sw_name
+    if not sw_path.is_file():
+        return []
     try:
         proc = subprocess.run(
-            [sw_path],
+            [str(sw_path)],
             capture_output=True,
             text=True,
-            timeout=10,
-            cwd=ida_dir,
+            timeout=15,
+            cwd=str(ida_root),
             input="\n",
+            check=False,
         )
-        output = proc.stdout + proc.stderr
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         return []
-
-    results: list[dict[str, str]] = []
-
-    # Parse:  #N: version ('tag') (C:\path\to\python3.dll)
-    for m in re.finditer(
-        r"#(\d+):\s+([\d.]+)\s+\([^)]+\)\s+\((.+?)(?:python3\d*\.dll)?\)",
-        output,
-    ):
-        idx, version, raw_dir = m.group(1), m.group(2), m.group(3).rstrip("\\")
-        exe_name = "python.exe" if sys.platform == "win32" else "bin/python3"
-        exe_path = os.path.join(raw_dir, exe_name)
-        if os.path.isfile(exe_path):
-            results.append({
-                "index": idx,
-                "version": version,
-                "dir": raw_dir,
-                "exe": exe_path,
-            })
-
-    # "previously used" -> mark as preferred and move to front
-    pref = re.search(
-        r"IDA previously used:\s+.+?\((.+?)(?:python3\d*\.dll)?\)",
-        output,
-    )
-    if pref and results:
-        pref_dir = pref.group(1).rstrip("\\")
-        for i, r in enumerate(results):
-            if r["dir"].lower() == pref_dir.lower():
-                results.insert(0, results.pop(i))
-                break
-
-    return results
-
-    return None
+    return parse_idapyswitch_output(proc.stdout + proc.stderr, windows=sys.platform == "win32")
 
 
 def _guess_ida_dir() -> str | None:
@@ -662,6 +646,23 @@ def main() -> None:
     config_path = os.path.join(plugins_dir, "ida_mcp", "config.conf")
     _write_config(config_path, config_values)
     _info(f"{t('config_written')}: {config_path}")
+
+    http_host = config_values.get("http_host", '"127.0.0.1"').strip('"')
+    http_port = config_values.get("http_port", "11338")
+    gateway_token_value = config_values.get("gateway_token", '""').strip('"')
+    mcp_config = {
+        "mcpServers": {
+            "ida-mcp": {
+                "url": f"http://{http_host}:{http_port}/mcp",
+                "headers": {
+                    "Authorization": f"Bearer {gateway_token_value}",
+                    "X-IDA-MCP-Token": gateway_token_value,
+                },
+            }
+        }
+    }
+    _info("Copy this configuration into your MCP client's mcp.json:")
+    print(json.dumps(mcp_config, ensure_ascii=False, indent=2))
 
     # ==================================================================
     # Done

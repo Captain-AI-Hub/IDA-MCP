@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -18,6 +18,8 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+from ida_python_detection import detect_ida_python as _detect_ida_python
+from ida_python_detection import parse_idapyswitch_output as _parse_idapyswitch_output
 from package_hcli import ROOT, build_archive
 
 if str(ROOT) not in sys.path:
@@ -32,8 +34,34 @@ def _ida_executable_name() -> str:
 def _normalize_ida_executable(value: str | Path) -> Path:
     path = Path(value).expanduser()
     if path.is_dir():
-        path /= _ida_executable_name()
+        if sys.platform == "darwin" and path.suffix == ".app":
+            path = path / "Contents" / "MacOS" / "ida"
+        else:
+            names = ("ida.exe", "ida64.exe") if os.name == "nt" else ("ida", "ida64")
+            path = next((path / name for name in names if (path / name).is_file()), path / names[0])
     return path.resolve()
+
+
+def _ida_executable_from_hcli_config() -> Path | None:
+    """Read HCLI/IDA's selected installation from $IDAUSR/ida-config.json."""
+    roots: list[Path] = []
+    for value in (os.environ.get("HCLI_IDAUSR"), os.environ.get("IDAUSR")):
+        if value:
+            roots.append(Path(value.split(os.pathsep)[0]).expanduser())
+    roots.append(Path.home() / ".idapro")
+
+    for root in roots:
+        config_path = root / "ida-config.json"
+        try:
+            document = json.loads(config_path.read_text(encoding="utf-8"))
+            configured = document.get("Paths", {}).get("ida-install-dir")
+        except (OSError, ValueError, TypeError):
+            continue
+        if configured:
+            candidate = _normalize_ida_executable(configured)
+            if candidate.is_file():
+                return candidate
+    return None
 
 
 def _candidate_ida_executables() -> list[Path]:
@@ -41,6 +69,9 @@ def _candidate_ida_executables() -> list[Path]:
     configured = os.environ.get("HCLI_CURRENT_IDA_INSTALL_DIR")
     if configured:
         candidates.append(_normalize_ida_executable(configured))
+    configured_from_file = _ida_executable_from_hcli_config()
+    if configured_from_file is not None:
+        candidates.append(configured_from_file)
 
     if os.name == "nt":
         for drive in ("D:/", "C:/"):
@@ -65,7 +96,10 @@ def _candidate_ida_executables() -> list[Path]:
         )
     else:
         candidates.extend(sorted(Path("/opt").glob("ida*/ida"), reverse=True))
+        candidates.extend(sorted(Path("/opt").glob("IDA*/ida"), reverse=True))
         candidates.extend(sorted(Path.home().glob("ida*/ida"), reverse=True))
+        candidates.extend(sorted(Path.home().glob(".local/share/applications/IDA*/ida"), reverse=True))
+        candidates.extend(sorted(Path.home().glob(".local/share/applications/ida*/ida"), reverse=True))
 
     unique: list[Path] = []
     seen: set[str] = set()
@@ -103,80 +137,20 @@ def choose_ida_executable(explicit: str | None) -> Path:
     return selected
 
 
+# Compatibility re-exports for callers that imported these helpers from this module.
 def parse_idapyswitch_output(output: str, *, windows: bool) -> list[dict[str, str]]:
-    """Parse idapyswitch output, placing IDA's previous interpreter first."""
-    results: list[dict[str, str]] = []
-    for match in re.finditer(
-        r"#(\d+):\s+([\d.]+)\s+\([^)]+\)\s+\((.+?)(?:python3\d*\.dll)?\)",
-        output,
-    ):
-        index, version, raw_dir = match.group(1), match.group(2), match.group(3)
-        raw_dir = raw_dir.rstrip("\\/")
-        executable = Path(raw_dir) / ("python.exe" if windows else "bin/python3")
-        if executable.is_file():
-            results.append(
-                {
-                    "index": index,
-                    "version": version,
-                    "dir": raw_dir,
-                    "exe": str(executable.resolve()),
-                }
-            )
-
-    preferred = re.search(
-        r"IDA previously used:\s+.+?\((.+?)(?:python3\d*\.dll)?\)",
-        output,
-    )
-    if preferred:
-        preferred_dir = os.path.normcase(preferred.group(1).rstrip("\\/"))
-        for position, result in enumerate(results):
-            if os.path.normcase(result["dir"]) == preferred_dir:
-                results.insert(0, results.pop(position))
-                break
-    return results
+    return _parse_idapyswitch_output(output, windows=windows)
 
 
 def detect_ida_python(ida_executable: Path) -> Path | None:
-    ida_dir = ida_executable.parent
-    switch_name = "idapyswitch.exe" if os.name == "nt" else "idapyswitch"
-    switch_path = ida_dir / switch_name
-    if switch_path.is_file():
-        try:
-            process = subprocess.run(
-                [str(switch_path)],
-                cwd=str(ida_dir),
-                input=b"\n",
-                capture_output=True,
-                timeout=15,
-                check=False,
-            )
-            raw_output = (process.stdout or b"") + (process.stderr or b"")
-            output = raw_output.decode("utf-8", errors="replace")
-            installations = parse_idapyswitch_output(
-                output,
-                windows=os.name == "nt",
-            )
-            if installations:
-                return Path(installations[0]["exe"])
-        except (OSError, subprocess.SubprocessError):
-            pass
+    return _detect_ida_python(ida_executable)
 
-    fallback_candidates = []
-    if os.name == "nt":
-        fallback_candidates.extend(
-            [
-                ida_dir / "ida-python" / "python.exe",
-                ida_dir / "python" / "python.exe",
-            ]
-        )
-    else:
-        fallback_candidates.extend(
-            [
-                ida_dir / "ida-python" / "bin" / "python3",
-                ida_dir / "python" / "bin" / "python3",
-            ]
-        )
-    return next((path.resolve() for path in fallback_candidates if path.is_file()), None)
+
+def build_hcli_environment(ida_python: Path, base: dict[str, str] | None = None) -> dict[str, str]:
+    """Build an HCLI environment that cannot fall back to its own Python."""
+    env = dict(os.environ if base is None else base)
+    env["HCLI_CURRENT_IDA_PYTHON_EXE"] = str(ida_python)
+    return env
 
 
 def personalize_archive(
@@ -185,6 +159,7 @@ def personalize_archive(
     *,
     ida_executable: Path,
     ida_python: Path | None,
+    gateway_token: str | None = None,
 ) -> None:
     """Inject machine-specific defaults into a temporary HCLI install archive."""
     with zipfile.ZipFile(source, "r") as input_zip:
@@ -202,6 +177,9 @@ def personalize_archive(
     ida_path_setting["default"] = str(ida_executable)
     ida_path_setting["name"] = f"IDA executable path ({ida_executable})"
 
+    if gateway_token is not None:
+        settings["gateway_token"]["default"] = gateway_token
+
     python_setting = settings["ida_python"]
     if ida_python is not None:
         python_setting["default"] = str(ida_python)
@@ -217,6 +195,25 @@ def personalize_archive(
             if info.filename == "ida-plugin.json":
                 data = updated_manifest
             output_zip.writestr(info, data)
+
+
+def mcp_client_config(gateway_token: str) -> dict[str, object]:
+    return {
+        "mcpServers": {
+            "ida-mcp": {
+                "url": "http://127.0.0.1:11338/mcp",
+                "headers": {
+                    "Authorization": f"Bearer {gateway_token}",
+                    "X-IDA-MCP-Token": gateway_token,
+                },
+            }
+        }
+    }
+
+
+def print_mcp_client_config(gateway_token: str) -> None:
+    print("Copy this configuration into your MCP client's mcp.json:")
+    print(json.dumps(mcp_client_config(gateway_token), ensure_ascii=False, indent=2))
 
 
 def main() -> int:
@@ -251,11 +248,13 @@ def main() -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
+    gateway_token = secrets.token_urlsafe(32)
+
     print(f"Detected IDA executable: {ida_executable}")
-    if ida_python:
-        print(f"Detected IDAPython interpreter: {ida_python}")
-    else:
-        print("IDAPython interpreter was not detected; first-launch auto-detection will be used.")
+    if ida_python is None:
+        print("error: IDAPython was not detected; refusing to use the system Python", file=sys.stderr)
+        return 1
+    print(f"Detected IDAPython interpreter: {ida_python}")
 
     if args.prepare_only:
         destination = args.prepare_only if args.prepare_only.is_absolute() else ROOT / args.prepare_only
@@ -264,8 +263,10 @@ def main() -> int:
             destination,
             ida_executable=ida_executable,
             ida_python=ida_python,
+            gateway_token=gateway_token,
         )
         print(f"Prepared personalized HCLI archive: {destination}")
+        print_mcp_client_config(gateway_token)
         return 0
 
     hcli = shutil.which("hcli")
@@ -280,12 +281,19 @@ def main() -> int:
             personalized,
             ida_executable=ida_executable,
             ida_python=ida_python,
+            gateway_token=gateway_token,
         )
-        print("Starting HCLI with detected paths as the prompt defaults...")
-        return subprocess.run(
+        print("Starting HCLI with the detected IDAPython interpreter for dependency installation...")
+        # HCLI 0.19 honors this override before probing or falling back.
+        env = build_hcli_environment(ida_python)
+        return_code = subprocess.run(
             [hcli, "plugin", "install", str(personalized)],
+            env=env,
             check=False,
         ).returncode
+        if return_code == 0:
+            print_mcp_client_config(gateway_token)
+        return return_code
 
 
 if __name__ == "__main__":

@@ -453,6 +453,22 @@ def get_gateway_token() -> str | None:
     return None
 
 
+def get_mcp_client_config() -> Dict[str, Any]:
+    """Return a copy/paste-ready MCP client configuration for the gateway."""
+    token = get_gateway_token() or ""
+    return {
+        "mcpServers": {
+            "ida-mcp": {
+                "url": get_http_url(),
+                "headers": {
+                    "Authorization": f"Bearer {token}",
+                    "X-IDA-MCP-Token": token,
+                },
+            }
+        }
+    }
+
+
 def get_gateway_auth_headers() -> dict[str, str]:
     """Get HTTP headers for calls to a token-protected gateway."""
     token = get_gateway_token()
