@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import atexit
 import json
+import ntpath
 import os
 import signal
 import socket
@@ -158,7 +159,7 @@ def _resolve_python_executable() -> str:
             and str(prefix)[2] in {"\\", "/"}
         )
         if os.name == "nt" or is_windows_prefix:
-            candidates.append(os.path.join(prefix, "python.exe"))
+            candidates.append(ntpath.join(prefix, "python.exe"))
         else:
             candidates.append(os.path.join(prefix, "bin", "python3"))
             candidates.append(os.path.join(prefix, "bin", "python"))
