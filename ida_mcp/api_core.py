@@ -16,6 +16,7 @@ Provides tools:
     - add_segment          add a new memory segment
     - delete_segment       delete a memory segment
     - get_cursor           get current cursor position
+    - survey_binary        high-level binary overview (counts, segments, entry points)
 """
 from __future__ import annotations
 
@@ -29,6 +30,7 @@ from .rpc import tool
 from .sync import idaread, idawrite
 from .type_utils import iter_local_type_ordinals
 from .utils import paginate, pattern_filter, normalize_arch, hex_addr, parse_address
+from . import ida_shims
 from .strings_cache import (
     get_strings_cache as _shared_get_strings_cache,
     init_strings_cache as _shared_init_strings_cache,
@@ -202,15 +204,15 @@ def list_functions(
     
     functions: List[dict] = []
     try:
-        for ea in idautils.Functions():
-            f = ida_funcs.get_func(ea)
-            if not f:
+        for ea in ida_shims.iter_function_starts():
+            bounds = ida_shims.func_bounds(ea)
+            if not bounds:
                 continue
             name = idaapi.get_func_name(ea)
             functions.append({
                 "name": name,
-                "start_ea": hex_addr(f.start_ea),
-                "end_ea": hex_addr(f.end_ea)
+                "start_ea": hex_addr(bounds[0]),
+                "end_ea": hex_addr(bounds[1])
             })
     except Exception as e:
         return {"error": f"list_functions failed: {e}"}
@@ -246,8 +248,8 @@ def list_globals(
     try:
         for ea, name in idautils.Names():
             try:
-                f = ida_funcs.get_func(ea)
-                if f and int(f.start_ea) == int(ea):
+                fstart = ida_shims.func_start(ea)
+                if fstart is not None and int(fstart) == int(ea):
                     continue
             except Exception:
                 pass
@@ -385,9 +387,9 @@ def get_entry_points() -> dict:
                 name = None
             if not name:
                 try:
-                    f = ida_funcs.get_func(ea)
-                    if f and int(f.start_ea) == int(ea):
-                        name = idaapi.get_func_name(f.start_ea)
+                    fstart = ida_shims.func_start(ea)
+                    if fstart is not None and int(fstart) == int(ea):
+                        name = idaapi.get_func_name(fstart)
                 except Exception:
                     name = None
             out.append({
@@ -573,28 +575,28 @@ def list_segments() -> dict:
     
     try:
         for seg in idautils.Segments():
-            s = ida_segment.getseg(seg)
-            if not s:
+            info = ida_shims.segment_info(seg)
+            if not info:
                 continue
-            
-            name = ida_segment.get_segm_name(s)
-            seg_class = ida_segment.get_segm_class(s)
-            
+
+            name = info["name"]
+            seg_class = info["sclass"]
+
             # parse permissions
-            perm = s.perm
+            perm = info["perm"]
             readable = bool(perm & ida_segment.SEGPERM_READ)
             writable = bool(perm & ida_segment.SEGPERM_WRITE)
             executable = bool(perm & ida_segment.SEGPERM_EXEC)
             perm_str = f"{'r' if readable else '-'}{'w' if writable else '-'}{'x' if executable else '-'}"
-            
+
             items.append({
                 "name": name,
-                "start_ea": hex_addr(s.start_ea),
-                "end_ea": hex_addr(s.end_ea),
-                "size": s.end_ea - s.start_ea,
+                "start_ea": hex_addr(info["start_ea"]),
+                "end_ea": hex_addr(info["end_ea"]),
+                "size": info["end_ea"] - info["start_ea"],
                 "perm": perm_str,
                 "class": seg_class,
-                "bitness": s.bitness * 16 + 16,  # 0=16bit, 1=32bit, 2=64bit
+                "bitness": 16 << info["bitness"],  # 0=16bit, 1=32bit, 2=64bit
             })
     except Exception as e:
         return {"error": f"list_segments failed: {e}"}
@@ -626,7 +628,7 @@ def add_segment(
 
     end = start + size
 
-    if ida_segment.getseg(start):
+    if ida_shims.segment_exists(start):
         return {"error": "address already belongs to a segment"}
 
     bitness_map = {16: 0, 32: 1, 64: 2}
@@ -641,17 +643,11 @@ def add_segment(
     if "x" in perm:
         perm_val |= ida_segment.SEGPERM_EXEC
 
-    seg = ida_segment.segment_t()
-    seg.start_ea = start
-    seg.end_ea = end
-    seg.perm = perm_val
-    seg.bitness = bitness_map[bitness]
-
-    ok = ida_segment.add_segm_ex(seg, name, seg_class, 0)
+    ok = ida_shims.add_segment(start, end, name, seg_class, perm_val, bitness_map[bitness])
     if not ok:
         import ida_kernwin
         return {
-            "error": "add_segm_ex failed",
+            "error": "add_segment failed",
             "detail": ida_kernwin.get_warning_message(ida_kernwin.SK_WARNING),
             "start_ea": hex_addr(start),
             "end_ea": hex_addr(end),
@@ -681,13 +677,13 @@ def delete_segment(
         return {"error": "invalid address"}
 
     ea = parsed["value"]
-    seg = ida_segment.getseg(ea)
-    if not seg:
+    info = ida_shims.segment_info(ea)
+    if not info:
         return {"error": "no segment at this address"}
 
-    seg_name = ida_segment.get_segm_name(seg)
-    seg_start = seg.start_ea
-    seg_end = seg.end_ea
+    seg_name = info["name"]
+    seg_start = info["start_ea"]
+    seg_end = info["end_ea"]
 
     ok = ida_segment.del_segm(seg_start, flags)
     if not ok:
@@ -725,12 +721,12 @@ def get_cursor() -> dict:
     ea_int = result.get("ea_int")
     if ea_int is not None:
         try:
-            f = ida_funcs.get_func(ea_int)
-            if f:
+            bounds = ida_shims.func_bounds(ea_int)
+            if bounds:
                 result["function"] = {
-                    "name": idaapi.get_func_name(f.start_ea),
-                    "start_ea": hex_addr(f.start_ea),
-                    "end_ea": hex_addr(f.end_ea),
+                    "name": idaapi.get_func_name(bounds[0]),
+                    "start_ea": hex_addr(bounds[0]),
+                    "end_ea": hex_addr(bounds[1]),
                 }
             else:
                 result["function"] = None
@@ -750,5 +746,88 @@ def get_cursor() -> dict:
             result["selection"] = None
     except Exception:
         result["selection"] = None
-    
+
     return result
+
+
+# ============================================================================
+# Binary survey
+# ============================================================================
+
+
+@tool
+@idaread
+def survey_binary() -> dict:
+    """High-level binary overview: metadata, entity counts, segments, entry points."""
+    # get_metadata is @idaread-wrapped; __wrapped__ runs inline on this thread.
+    metadata = get_metadata.__wrapped__()  # type: ignore[attr-defined]
+
+    counts: dict = {}
+
+    try:
+        counts["functions"] = sum(1 for _ in ida_shims.iter_function_starts())
+    except Exception:
+        counts["functions"] = None
+
+    try:
+        counts["strings"] = len(_get_strings_cache())
+    except Exception:
+        counts["strings"] = None
+
+    try:
+        import_count = 0
+
+        def _count_import(_ea, _name, _ordinal):
+            nonlocal import_count
+            import_count += 1
+            return True
+
+        for i in range(ida_nalt.get_import_module_qty()):
+            ida_nalt.enum_import_names(i, _count_import)
+        counts["imports"] = import_count
+    except Exception:
+        counts["imports"] = None
+
+    try:
+        counts["segments"] = ida_segment.get_segm_qty()
+    except Exception:
+        counts["segments"] = None
+
+    try:
+        counts["entry_points"] = ida_entry.get_entry_qty()
+    except Exception:
+        counts["entry_points"] = None
+
+    segments: List[dict] = []
+    try:
+        for seg_ea in idautils.Segments():
+            info = ida_shims.segment_info(seg_ea)
+            if not info:
+                continue
+            segments.append({
+                "name": info["name"],
+                "start_ea": hex_addr(int(info["start_ea"])),
+                "end_ea": hex_addr(int(info["end_ea"])),
+            })
+    except Exception:
+        segments = []
+
+    entry_points: List[dict] = []
+    try:
+        for i in range(ida_entry.get_entry_qty()):
+            ordinal = ida_entry.get_entry_ordinal(i)
+            ea = ida_entry.get_entry(ordinal)
+            entry_points.append({
+                "ordinal": int(ordinal),
+                "ea": hex_addr(int(ea)),
+                "name": ida_entry.get_entry_name(ordinal),
+            })
+    except Exception:
+        entry_points = []
+
+    return {
+        "metadata": metadata,
+        "counts": counts,
+        "segments": segments,
+        "entry_points": entry_points,
+    }

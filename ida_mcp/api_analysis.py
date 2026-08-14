@@ -12,6 +12,11 @@ Provides tools:
     - xrefs_to_field      struct field references
     - find_bytes          byte pattern search
     - get_basic_blocks    get basic blocks
+    - find_regex          regex search over symbol names
+    - search_text         search disassembly text and comments
+    - find_instructions   find instructions by mnemonic and/or pattern
+    - callgraph           build a call graph from root functions
+    - trace_data_flow     trace data references to/from an address
 """
 from __future__ import annotations
 
@@ -21,6 +26,7 @@ from .rpc import tool
 from .sync import idaread, wait_for_auto_analysis
 from .utils import parse_address, hex_addr
 from .analysis_utils import decompile_with_error as _decompile_with_error
+from . import ida_shims
 
 # IDA module imports
 try:
@@ -68,24 +74,23 @@ def _resolve_function(query: Union[int, str]) -> dict:
         return {"error": "invalid address", "query": query}
 
     try:
-        f = ida_funcs.get_func(ea)
+        bounds = ida_shims.func_bounds(ea)
     except Exception:
-        f = None
-    if not f:
+        bounds = None
+    if not bounds:
         return {"error": "function not found", "query": query}
 
     try:
-        name = idaapi.get_func_name(f.start_ea)
+        name = idaapi.get_func_name(bounds[0])
     except Exception:
         name = "?"
 
     return {
         "query": query,
         "ea": int(ea),
-        "function": f,
         "name": name,
-        "start_ea": int(f.start_ea),
-        "end_ea": int(f.end_ea),
+        "start_ea": int(bounds[0]),
+        "end_ea": int(bounds[1]),
     }
 
 
@@ -435,7 +440,7 @@ def linear_disasm(
     
     # verify segment exists
     try:
-        if ida_segment is not None and not ida_segment.getseg(ea):
+        if ida_segment is not None and not ida_shims.segment_exists(ea):
             return {'error': 'no_segment'}
     except Exception:
         pass
@@ -537,10 +542,10 @@ def get_callers(
                 if not _is_call_insn(site_ea):
                     continue
 
-                owner = ida_funcs.get_func(site_ea)
-                if owner:
-                    owner_ea = int(owner.start_ea)
-                    owner_name = idaapi.get_func_name(owner.start_ea)
+                owner_start = ida_shims.func_start(site_ea)
+                if owner_start is not None:
+                    owner_ea = int(owner_start)
+                    owner_name = idaapi.get_func_name(owner_start)
                 else:
                     owner_ea = site_ea
                     owner_name = _symbol_name(site_ea)
@@ -590,10 +595,10 @@ def get_callees(
                     if insn_size > 0 and target_ea == head_ea + insn_size:
                         continue
 
-                    callee = ida_funcs.get_func(target_ea)
-                    if callee:
-                        callee_ea = int(callee.start_ea)
-                        callee_name = idaapi.get_func_name(callee.start_ea)
+                    callee_start = ida_shims.func_start(target_ea)
+                    if callee_start is not None:
+                        callee_ea = int(callee_start)
+                        callee_name = idaapi.get_func_name(callee_start)
                     else:
                         callee_ea = target_ea
                         callee_name = _symbol_name(target_ea)
@@ -809,11 +814,11 @@ def xrefs_to_field(
     MAX_MATCH = 500
     
     try:
-        for fea in idautils.Functions():
-            f = ida_funcs.get_func(fea)
-            if not f:
+        for fea in ida_shims.iter_function_starts():
+            bounds = ida_shims.func_bounds(fea)
+            if not bounds:
                 continue
-            for ea in idautils.Heads(int(f.start_ea), int(f.end_ea)):
+            for ea in idautils.Heads(int(bounds[0]), int(bounds[1])):
                 try:
                     flags = idaapi.get_full_flags(ea)
                     if not idaapi.is_code(flags):
@@ -972,9 +977,9 @@ def find_bytes(
             # get function info
             func_name = None
             try:
-                f = ida_funcs.get_func(found)
-                if f:
-                    func_name = idaapi.get_func_name(f.start_ea)
+                fstart = ida_shims.func_start(found)
+                if fstart is not None:
+                    func_name = idaapi.get_func_name(fstart)
             except Exception:
                 pass
             
@@ -1023,13 +1028,11 @@ def _basic_blocks_single(addr: Union[int, str]) -> dict:
     if info.get("error"):
         return info
 
-    f = info["function"]
-    
     blocks: List[dict] = []
-    
+
     try:
         # use FlowChart to get basic blocks
-        fc = ida_gdl.FlowChart(f)
+        fc = ida_gdl.FlowChart(bounds=(info["start_ea"], info["end_ea"]))
         
         for block in fc:
             block_info: dict = {
@@ -1072,8 +1075,8 @@ def _basic_blocks_single(addr: Union[int, str]) -> dict:
     return {
         "query": addr,
         "function": info["name"],
-        "start_ea": hex_addr(f.start_ea),
-        "end_ea": hex_addr(f.end_ea),
+        "start_ea": hex_addr(info["start_ea"]),
+        "end_ea": hex_addr(info["end_ea"]),
         "total": len(blocks),
         "blocks": blocks,
     }
@@ -1082,3 +1085,362 @@ def _basic_blocks_single(addr: Union[int, str]) -> dict:
 def basic_blocks_for_function(query: Union[int, str]) -> dict:
     """Service helper for one function's basic blocks."""
     return _basic_blocks_single(query)
+
+
+# ============================================================================
+# Search: symbol names, listing text, instructions
+# ============================================================================
+
+import re
+from collections import deque
+
+from .utils import normalize_list_input
+
+try:
+    import ida_lines  # type: ignore
+    import ida_xref  # type: ignore
+except ImportError:
+    ida_lines = None
+    ida_xref = None
+
+
+def _listing_text(ea: int) -> str:
+    """Plain disassembly line text (tags removed) for an address."""
+    if ida_lines is None:
+        return ""
+    try:
+        line = ida_lines.generate_disasm_line(ea, 0) or ""
+        return str(ida_lines.tag_remove(line)).strip()
+    except Exception:
+        return ""
+
+
+def _iter_all_heads():
+    """Yield every instruction/data head in the database."""
+    try:
+        start = int(ida_ida.inf_get_min_ea())
+        end = int(ida_ida.inf_get_max_ea())
+    except Exception:
+        return
+    if start >= end:
+        return
+    for head in idautils.Heads(start, end):
+        yield int(head)
+
+
+def _function_name_at(ea: int) -> Optional[str]:
+    try:
+        fstart = ida_shims.func_start(ea)
+        if fstart is not None:
+            return idaapi.get_func_name(fstart)
+    except Exception:
+        pass
+    return None
+
+
+@tool
+@idaread
+def find_regex(
+    pattern: Annotated[str, "Regular expression matched against symbol names"],
+    limit: Annotated[int, "Maximum matches to return"] = 30,
+    offset: Annotated[int, "Number of matches to skip"] = 0,
+) -> dict:
+    """Search symbol names (functions, globals, labels) with a regular expression."""
+    try:
+        rx = re.compile(pattern)
+    except re.error as e:
+        return {"error": f"invalid regex: {e}", "pattern": pattern}
+
+    matches: List[dict] = []
+    skipped = 0
+    truncated = False
+    for ea, name in idautils.Names():
+        if not name or not rx.search(str(name)):
+            continue
+        if skipped < max(0, offset):
+            skipped += 1
+            continue
+        matches.append({"ea": hex_addr(int(ea)), "name": str(name)})
+        if len(matches) >= max(1, limit):
+            truncated = True
+            break
+
+    result: Dict[str, Any] = {
+        "pattern": pattern,
+        "count": len(matches),
+        "items": matches,
+    }
+    if truncated:
+        result["truncated"] = True
+    return result
+
+
+@tool
+@idaread
+def search_text(
+    query: Annotated[str, "Substring (default) or regular expression matched against disassembly lines and comments"],
+    regex: Annotated[bool, "Treat query as a regular expression"] = False,
+    limit: Annotated[int, "Maximum matches to return"] = 30,
+) -> dict:
+    """Search disassembly listing text (instructions, comments) across the database."""
+    if regex:
+        try:
+            rx = re.compile(query, re.IGNORECASE)
+        except re.error as e:
+            return {"error": f"invalid regex: {e}", "query": query}
+
+        def matcher(text: str) -> bool:
+            return bool(rx.search(text))
+    else:
+        needle = query.lower()
+
+        def matcher(text: str) -> bool:
+            return needle in text.lower()
+
+    matches: List[dict] = []
+    truncated = False
+    for head in _iter_all_heads():
+        text = _listing_text(head)
+        try:
+            cmt = ida_bytes.get_cmt(head, False) or ""
+        except Exception:
+            cmt = ""
+        haystack = f"{text} ; {cmt}" if cmt else text
+        if not haystack or not matcher(haystack):
+            continue
+        matches.append({
+            "ea": hex_addr(head),
+            "text": text,
+            "comment": cmt or None,
+            "function": _function_name_at(head),
+        })
+        if len(matches) >= max(1, limit):
+            truncated = True
+            break
+
+    result: Dict[str, Any] = {
+        "query": query,
+        "regex": bool(regex),
+        "count": len(matches),
+        "items": matches,
+    }
+    if truncated:
+        result["truncated"] = True
+    return result
+
+
+@tool
+@idaread
+def find_instructions(
+    mnemonic: Annotated[str, "Mnemonic filter (case-insensitive substring, e.g. 'call'); empty matches all"] = "",
+    pattern: Annotated[str, "Optional regex matched against the full instruction text"] = "",
+    limit: Annotated[int, "Maximum matches to return"] = 100,
+) -> dict:
+    """Find instructions by mnemonic and/or a regex over the instruction text."""
+    rx = None
+    if pattern:
+        try:
+            rx = re.compile(pattern, re.IGNORECASE)
+        except re.error as e:
+            return {"error": f"invalid regex: {e}", "pattern": pattern}
+
+    needle = mnemonic.strip().lower()
+    if not needle and rx is None:
+        return {"error": "provide mnemonic and/or pattern"}
+
+    matches: List[dict] = []
+    truncated = False
+    for head in _iter_all_heads():
+        text = _listing_text(head)
+        if not text:
+            continue
+        parts = text.split(None, 1)
+        mnem = parts[0] if parts else ""
+        if needle and needle not in mnem.lower():
+            continue
+        if rx is not None and not rx.search(text):
+            continue
+        matches.append({
+            "ea": hex_addr(head),
+            "mnemonic": mnem,
+            "text": text,
+            "function": _function_name_at(head),
+        })
+        if len(matches) >= max(1, limit):
+            truncated = True
+            break
+
+    result: Dict[str, Any] = {
+        "mnemonic": mnemonic,
+        "pattern": pattern,
+        "count": len(matches),
+        "items": matches,
+    }
+    if truncated:
+        result["truncated"] = True
+    return result
+
+
+# ============================================================================
+# Call graph and data-flow tracing
+# ============================================================================
+
+
+@tool
+@idaread
+def callgraph(
+    roots: Annotated[Union[int, str, List[str]], "Root function name(s) or address(es) (comma-separated ok)"],
+    max_depth: Annotated[int, "Maximum call depth from the roots"] = 5,
+    max_nodes: Annotated[int, "Maximum functions to include"] = 1000,
+) -> dict:
+    """Build a call graph by walking call references from the root function(s)."""
+    nodes: Dict[int, dict] = {}
+    edges: List[dict] = []
+    seen_edges = set()
+    errors: List[dict] = []
+    queue: deque = deque()
+    root_names: List[str] = []
+
+    for query in normalize_list_input(roots):
+        info = _resolve_function(query)
+        if "error" in info:
+            errors.append(info)
+            continue
+        root_names.append(info["name"])
+        queue.append((info["start_ea"], 0))
+
+    truncated = False
+    while queue:
+        start_ea, depth = queue.popleft()
+        if start_ea in nodes:
+            continue
+        if len(nodes) >= max(1, max_nodes):
+            truncated = True
+            break
+        nodes[start_ea] = {
+            "ea": hex_addr(start_ea),
+            "name": _function_name_at(start_ea),
+            "depth": depth,
+        }
+        if depth >= max_depth:
+            continue
+        try:
+            bounds = ida_shims.func_bounds(start_ea)
+            heads = ida_shims.iter_func_items(*bounds) if bounds else iter(())
+        except Exception:
+            continue
+        for head in heads:
+            for x in idautils.XrefsFrom(head, 0):
+                if not x.iscode:
+                    continue
+                try:
+                    callee_start = ida_shims.func_start(x.to)
+                except Exception:
+                    callee_start = None
+                if callee_start is None or int(callee_start) == start_ea:
+                    continue
+                callee = int(callee_start)
+                key = (start_ea, callee)
+                if key not in seen_edges:
+                    seen_edges.add(key)
+                    edges.append({
+                        "caller": hex_addr(start_ea),
+                        "callee": hex_addr(callee),
+                    })
+                if callee not in nodes:
+                    queue.append((callee, depth + 1))
+
+    result: Dict[str, Any] = {
+        "roots": root_names,
+        "max_depth": max_depth,
+        "total_nodes": len(nodes),
+        "total_edges": len(edges),
+        "nodes": sorted(nodes.values(), key=lambda item: (item["depth"], item["ea"])),
+        "edges": edges,
+    }
+    if truncated:
+        result["truncated"] = True
+    if errors:
+        result["errors"] = errors
+    return result
+
+
+@tool
+@idaread
+def trace_data_flow(
+    address: Annotated[Union[int, str], "Start address or symbol name"],
+    direction: Annotated[str, "to | from | both"] = "both",
+    max_depth: Annotated[int, "Maximum xref hops"] = 3,
+    max_nodes: Annotated[int, "Maximum nodes to include"] = 200,
+) -> dict:
+    """Trace data references (reads/writes/offsets) to and from an address."""
+    parsed = parse_address(address)
+    if parsed["ok"] and parsed["value"] is not None:
+        start = parsed["value"]
+    else:
+        try:
+            start = int(idaapi.get_name_ea(idaapi.BADADDR, str(address)))
+        except Exception:
+            start = idaapi.BADADDR
+        if start == idaapi.BADADDR:
+            return {"error": "not found", "query": address}
+
+    direction_norm = str(direction or "both").lower()
+    if direction_norm not in {"to", "from", "both"}:
+        return {"error": f"invalid direction: {direction}", "expected": "to|from|both"}
+
+    nodes: Dict[int, dict] = {}
+    edges: List[dict] = []
+    seen_edges = set()
+    queue: deque = deque([(int(start), 0)])
+    truncated = False
+
+    while queue:
+        ea, depth = queue.popleft()
+        if ea in nodes:
+            continue
+        if len(nodes) >= max(1, max_nodes):
+            truncated = True
+            break
+        nodes[ea] = {"ea": hex_addr(ea), "name": _symbol_name(ea), "depth": depth}
+        if depth >= max(0, max_depth):
+            continue
+
+        neighbors = []
+        if direction_norm in {"to", "both"}:
+            try:
+                for x in idautils.XrefsTo(ea, 0):
+                    if not x.iscode:
+                        neighbors.append((int(x.frm), ea, int(x.type)))
+            except Exception:
+                pass
+        if direction_norm in {"from", "both"}:
+            try:
+                for x in idautils.XrefsFrom(ea, 0):
+                    if not x.iscode:
+                        neighbors.append((ea, int(x.to), int(x.type)))
+            except Exception:
+                pass
+
+        for frm, to, xtype in neighbors:
+            key = (frm, to)
+            if key not in seen_edges:
+                seen_edges.add(key)
+                edges.append({"frm": hex_addr(frm), "to": hex_addr(to), "type": xtype})
+            other = frm if to == ea else to
+            if other not in nodes:
+                queue.append((other, depth + 1))
+
+    result: Dict[str, Any] = {
+        "query": address,
+        "start": hex_addr(int(start)),
+        "direction": direction_norm,
+        "max_depth": max_depth,
+        "total_nodes": len(nodes),
+        "total_edges": len(edges),
+        "nodes": sorted(nodes.values(), key=lambda item: (item["depth"], item["ea"])),
+        "edges": edges,
+    }
+    if truncated:
+        result["truncated"] = True
+    return result

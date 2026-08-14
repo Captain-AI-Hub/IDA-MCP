@@ -159,16 +159,10 @@ class TestDeclareStackHelpers:
     def test_declare_stack_uses_explicit_type(self, monkeypatch):
         calls: dict[str, object] = {}
 
-        class FakeFunc:
-            start_ea = 0x401000
-
-        class FakeFuncs:
-            @staticmethod
-            def get_func(_ea):
-                return FakeFunc()
-
         monkeypatch.setattr(api_stack, "wait_for_auto_analysis", lambda: None)
-        monkeypatch.setattr(api_stack, "ida_funcs", FakeFuncs())
+        monkeypatch.setattr(
+            api_stack.ida_shims, "func_bounds", lambda _ea: (0x401000, 0x401100)
+        )
         monkeypatch.setattr(api_stack, "_frame_member_by_name", lambda _func, _name: None)
 
         def fake_parse(type_text):
@@ -193,16 +187,10 @@ class TestDeclareStackHelpers:
     def test_declare_stack_uses_size_based_fallback_type(self, monkeypatch):
         calls: dict[str, object] = {}
 
-        class FakeFunc:
-            start_ea = 0x401000
-
-        class FakeFuncs:
-            @staticmethod
-            def get_func(_ea):
-                return FakeFunc()
-
         monkeypatch.setattr(api_stack, "wait_for_auto_analysis", lambda: None)
-        monkeypatch.setattr(api_stack, "ida_funcs", FakeFuncs())
+        monkeypatch.setattr(
+            api_stack.ida_shims, "func_bounds", lambda _ea: (0x401000, 0x401100)
+        )
         monkeypatch.setattr(api_stack, "_frame_member_by_name", lambda _func, _name: None)
 
         def fake_parse(type_text):

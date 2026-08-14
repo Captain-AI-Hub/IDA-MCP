@@ -7,6 +7,11 @@ Provides tools:
     - rename_global_variable rename global variable
     - patch_bytes          byte patching
     - apply_patch          export patched input file
+    - add_bookmark         add an IDA bookmark
+    - patch_asm            assemble and patch instructions
+    - set_op_type          set operand display type (hex/dec/char/...)
+    - force_recompile      invalidate cached decompilations
+    - diff_before_after    decompile diff around a modification tool
 """
 from __future__ import annotations
 
@@ -19,6 +24,7 @@ from .rpc import tool, unsafe
 from .strings_cache import invalidate_strings_cache
 from .sync import idaread, idawrite, wait_for_auto_analysis
 from .utils import parse_address, is_valid_c_identifier, normalize_list_input, hex_addr
+from . import ida_shims
 
 # IDA module imports
 try:
@@ -135,41 +141,41 @@ def rename_function(
     
     # wrap the entire operation in batch mode to suppress all warning messages
     with suppress_ida_warnings():
-        f = None
+        fstart = None
         addr = None
-        
+
         # method 1: try to look up as function name
         if isinstance(address, str):
             try:
                 ea = idaapi.get_name_ea(idaapi.BADADDR, address)
                 if ea != idaapi.BADADDR:
-                    f = ida_funcs.get_func(ea)
-                    if f:
+                    fstart = ida_shims.func_start(ea)
+                    if fstart is not None:
                         addr = ea
             except Exception:
                 pass
-        
+
         # method 2: try to parse as address
-        if not f:
+        if fstart is None:
             parsed = parse_address(str(address))
             if parsed["ok"] and parsed["value"] is not None:
                 addr = parsed["value"]
                 try:
-                    f = ida_funcs.get_func(addr)
+                    fstart = ida_shims.func_start(addr)
                 except Exception:
                     pass
-        
-        if not f:
+
+        if fstart is None:
             return {
                 "error": "function not found",
                 "query": str(address),
                 "parsed_addr": hex_addr(addr) if addr is not None else None,
             }
-        
-        start_ea = int(f.start_ea)
-        
+
+        start_ea = int(fstart)
+
         try:
-            old_name = idaapi.get_func_name(f.start_ea)
+            old_name = idaapi.get_func_name(fstart)
         except Exception:
             old_name = None
         
@@ -235,14 +241,14 @@ def rename_local_variable(
         return {"error": "failed to init hex-rays"}
     
     try:
-        f = ida_funcs.get_func(addr)
+        fstart = ida_shims.func_start(addr)
     except Exception:
-        f = None
-    if not f:
+        fstart = None
+    if fstart is None:
         return {"error": "function not found"}
-    
+
     from .analysis_utils import decompile_silent as _decompile_silent
-    cfunc = _decompile_silent(f.start_ea)
+    cfunc = _decompile_silent(fstart)
     if not cfunc:
         return {"error": "decompile returned None"}
     
@@ -275,13 +281,13 @@ def rename_local_variable(
         return {"error": f"set_lvar_name failed: {e}"}
     
     try:
-        fname = idaapi.get_func_name(f.start_ea)
+        fname = idaapi.get_func_name(fstart)
     except Exception:
         fname = "?"
-    
+
     return {
         "function": fname,
-        "start_ea": hex_addr(f.start_ea),
+        "start_ea": hex_addr(fstart),
         "old_name": old_name,
         "new_name": new_name_clean,
         "changed": bool(ok),
@@ -317,8 +323,8 @@ def rename_global_variable(
     
     # reject if target is a function start
     try:
-        f = ida_funcs.get_func(ea)
-        if f and int(f.start_ea) == int(ea):
+        fstart = ida_shims.func_start(ea)
+        if fstart is not None and int(fstart) == int(ea):
             return {"error": "target is a function start (use function rename)"}
     except Exception:
         pass
@@ -629,4 +635,330 @@ def apply_patch(
         "patches": applied[:100],
         "skipped_patches": skipped[:100],
         "truncated": len(applied) > 100 or len(skipped) > 100,
+    }
+
+
+# ============================================================================
+# Bookmarks, assembly patching, operand display, decompiler cache
+# ============================================================================
+
+import difflib
+
+try:
+    import ida_ida  # type: ignore
+    import ida_idp  # type: ignore
+    import ida_moves  # type: ignore
+except ImportError:
+    ida_ida = None
+    ida_idp = None
+    ida_moves = None
+
+
+@tool
+@idawrite
+def add_bookmark(
+    address: Annotated[Union[int, str], "Address to bookmark"],
+    description: Annotated[str, "Bookmark description"] = "",
+) -> dict:
+    """Add an IDA bookmark at an address (visible in the bookmarks view)."""
+    parsed = parse_address(address)
+    if not parsed["ok"] or parsed["value"] is None:
+        return {"error": "invalid address", "address": address}
+    ea = parsed["value"]
+
+    if ida_moves is None or ida_kernwin is None or not hasattr(ida_kernwin, "ea2place"):
+        return {"error": "bookmarks API unavailable in this IDA build", "address": hex_addr(ea)}
+
+    try:
+        entry = ida_moves.lochist_entry_t()
+        entry.set_place(ida_kernwin.ea2place(ea))
+
+        slot = None
+        for i in range(1024):
+            try:
+                probe = ida_moves.lochist_entry_t()
+                if not ida_moves.bookmarks_t.get(probe, i, None) or not probe.is_valid():
+                    slot = i
+                    break
+            except Exception:
+                slot = i
+                break
+        if slot is None:
+            return {"error": "no free bookmark slot", "address": hex_addr(ea)}
+
+        ida_moves.bookmarks_t.mark(entry, slot, "", str(description or ""), None)
+        return {
+            "address": hex_addr(ea),
+            "slot": slot,
+            "description": description or "",
+            "added": True,
+        }
+    except Exception as e:
+        return {"error": f"bookmark failed: {e}", "address": hex_addr(ea)}
+
+
+@unsafe
+@tool
+@idawrite
+def patch_asm(
+    items: Annotated[List[Dict[str, Any]], "List of {address, asm} objects"],
+) -> List[dict]:
+    """Assemble instruction text and patch it at address(es). Requires processor assembler support (e.g. x86)."""
+    if not isinstance(items, list):
+        return [{"error": "items must be a list"}]
+    if len(items) > _MAX_BATCH_ITEMS:
+        return [{"error": f"too many items (max {_MAX_BATCH_ITEMS})"}]
+    if ida_idp is None or not hasattr(ida_idp, "assemble"):
+        return [{"error": "assembler unavailable in this IDA build"}]
+
+    use32 = True
+    try:
+        use32 = not ida_ida.inf_is_64bit()
+    except Exception:
+        pass
+
+    results = []
+    for item in items:
+        if not isinstance(item, dict):
+            results.append({"error": "item must be an object", "item": item})
+            continue
+        address = item.get("address")
+        asm_text = str(item.get("asm", "") or "").strip()
+
+        parsed = parse_address(address)
+        if not parsed["ok"] or parsed["value"] is None:
+            results.append({"error": "invalid address", "address": address})
+            continue
+        if not asm_text:
+            results.append({"error": "empty asm", "address": hex_addr(parsed["value"])})
+            continue
+        ea = parsed["value"]
+
+        try:
+            data = ida_idp.assemble(ea, 0, ea, use32, asm_text)
+        except Exception as e:
+            results.append({"error": f"assemble failed: {e}", "address": hex_addr(ea), "asm": asm_text})
+            continue
+        if not data:
+            results.append({"error": "assemble failed", "address": hex_addr(ea), "asm": asm_text})
+            continue
+        if isinstance(data, str):
+            data = data.encode("latin-1")
+        data = bytes(data)
+
+        try:
+            ida_bytes.patch_bytes(ea, data)
+        except Exception as e:
+            results.append({"error": f"patch failed: {e}", "address": hex_addr(ea), "asm": asm_text})
+            continue
+
+        results.append({
+            "address": hex_addr(ea),
+            "asm": asm_text,
+            "bytes": data.hex(" "),
+            "size": len(data),
+            "patched": True,
+        })
+
+    return results
+
+
+_OP_TYPE_APPLIERS = {
+    "hex": "op_hex",
+    "dec": "op_dec",
+    "oct": "op_oct",
+    "bin": "op_bin",
+    "char": "op_chr",
+    "stkvar": "op_stkvar",
+}
+
+
+@tool
+@idawrite
+def set_op_type(
+    items: Annotated[List[Dict[str, Any]], "List of {address, type, operand?} objects; type: hex|dec|oct|bin|char|stkvar"],
+) -> List[dict]:
+    """Set the display type of an instruction operand (hex/dec/oct/bin/char/stkvar)."""
+    if not isinstance(items, list):
+        return [{"error": "items must be a list"}]
+    if len(items) > _MAX_BATCH_ITEMS:
+        return [{"error": f"too many items (max {_MAX_BATCH_ITEMS})"}]
+
+    results = []
+    for item in items:
+        if not isinstance(item, dict):
+            results.append({"error": "item must be an object", "item": item})
+            continue
+        address = item.get("address")
+        op_type = str(item.get("type", "") or "").strip().lower()
+        try:
+            operand = int(item.get("operand", 0) or 0)
+        except (TypeError, ValueError):
+            operand = 0
+
+        parsed = parse_address(address)
+        if not parsed["ok"] or parsed["value"] is None:
+            results.append({"error": "invalid address", "address": address})
+            continue
+        ea = parsed["value"]
+
+        applier_name = _OP_TYPE_APPLIERS.get(op_type)
+        applier = getattr(ida_bytes, applier_name, None) if applier_name else None
+        if applier is None:
+            results.append({
+                "error": f"unsupported op type: {op_type}",
+                "expected": sorted(_OP_TYPE_APPLIERS),
+                "address": hex_addr(ea),
+            })
+            continue
+
+        try:
+            ok = applier(ea, operand)
+        except Exception as e:
+            results.append({"error": f"set failed: {e}", "address": hex_addr(ea), "operand": operand})
+            continue
+
+        results.append({
+            "address": hex_addr(ea),
+            "operand": operand,
+            "type": op_type,
+            "applied": bool(ok),
+        })
+
+    return results
+
+
+@tool
+@idawrite
+def force_recompile(
+    addresses: Annotated[Optional[Union[int, str, List[str]]], "Function name(s)/address(es) to invalidate (comma-separated ok); omit to clear all cached decompilations"] = None,
+) -> dict:
+    """Invalidate cached Hex-Rays decompilations so they are regenerated."""
+    if ida_hexrays is None:
+        return {"error": "hex-rays unavailable"}
+    try:
+        if not ida_hexrays.init_hexrays_plugin():
+            return {"error": "failed to init hex-rays"}
+    except Exception:
+        return {"error": "failed to init hex-rays"}
+
+    queries = normalize_list_input(addresses) if addresses is not None else []
+    if not queries:
+        ida_hexrays.clear_cached_cfuncs()
+        return {"cleared": "all"}
+
+    dirty_supported = hasattr(ida_hexrays, "mark_cfunc_dirty")
+    results = []
+    for query in queries:
+        parsed = parse_address(query)
+        if parsed["ok"] and parsed["value"] is not None:
+            ea = parsed["value"]
+        else:
+            try:
+                ea = int(idaapi.get_name_ea(idaapi.BADADDR, str(query)))
+            except Exception:
+                ea = idaapi.BADADDR
+            if ea == idaapi.BADADDR:
+                results.append({"error": "not found", "query": query})
+                continue
+
+        try:
+            fstart = ida_shims.func_start(ea)
+        except Exception:
+            fstart = None
+        if fstart is None:
+            results.append({"error": "function not found", "query": query})
+            continue
+
+        try:
+            if dirty_supported:
+                ida_hexrays.mark_cfunc_dirty(int(fstart))
+                results.append({"address": hex_addr(int(fstart)), "marked_dirty": True})
+            else:
+                ida_hexrays.clear_cached_cfuncs()
+                results.append({
+                    "address": hex_addr(int(fstart)),
+                    "marked_dirty": False,
+                    "note": "mark_cfunc_dirty unavailable; cleared all cached decompilations",
+                })
+        except Exception as e:
+            results.append({"error": str(e), "query": query})
+
+    return {"cleared": "selected", "results": results}
+
+
+# ============================================================================
+# Decompile diff around a modification
+# ============================================================================
+
+_DIFF_MAX_LINES = 200
+# Actions that make no sense (or are unsafe) inside a diff wrapper.
+_DIFF_BLOCKED_ACTIONS = {
+    "diff_before_after",
+    "close_ida",
+    "save_idb",
+    "py_eval",
+    "py_exec_file",
+    "apply_patch",
+    "shutdown_gateway",
+}
+
+
+@unsafe
+@tool
+@idawrite
+def diff_before_after(
+    address: Annotated[Union[int, str], "Function name or address to snapshot"],
+    action: Annotated[str, "Name of the modification tool to invoke"],
+    action_args: Annotated[Optional[Dict[str, Any]], "Arguments passed to the action tool"] = None,
+) -> dict:
+    """Snapshot a function's decompilation, run a modification tool, return the unified diff."""
+    from .api_analysis import _decompile_text, _resolve_function
+    from .rpc import get_tools
+
+    if action in _DIFF_BLOCKED_ACTIONS:
+        return {"error": f"action not allowed: {action}"}
+    fn = get_tools().get(action)
+    if fn is None:
+        return {"error": f"unknown tool: {action}"}
+    if action_args is not None and not isinstance(action_args, dict):
+        return {"error": "action_args must be an object"}
+
+    info = _resolve_function(address)
+    if "error" in info:
+        return info
+
+    before, error = _decompile_text(info)
+    if error:
+        return {"error": f"decompile failed: {error}", "query": address}
+
+    # Bypass the action's own @idawrite wrapper: we already hold the main
+    # thread, so the unwrapped function runs inline in the same context.
+    call = getattr(fn, "__wrapped__", fn)
+    try:
+        action_result = call(**(action_args or {}))
+    except Exception as e:
+        return {"error": f"action failed: {e}", "action": action, "query": address}
+
+    after, error = _decompile_text(info)
+    if error:
+        return {"error": f"decompile failed after action: {error}", "query": address, "action_result": action_result}
+
+    diff_lines = list(difflib.unified_diff(
+        before.splitlines(),
+        after.splitlines(),
+        fromfile="before",
+        tofile="after",
+        lineterm="",
+    ))
+    truncated = len(diff_lines) > _DIFF_MAX_LINES
+
+    return {
+        "query": address,
+        "function": info["name"],
+        "action": action,
+        "action_result": action_result,
+        "changed": before != after,
+        "diff": "\n".join(diff_lines[:_DIFF_MAX_LINES]),
+        "truncated": truncated,
     }

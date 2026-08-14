@@ -26,7 +26,7 @@ IDA-MCP/
 - Each IDA instance chooses a free port starting at `ida_default_port` and serves MCP at `/mcp/`.
 - The standalone gateway listens on `127.0.0.1:11338`, registers instances under `/internal/*`, and exposes the proxy MCP endpoint at `/mcp`.
 - Tool registration is decorator based: use `@tool` plus `@idaread` or `@idawrite`.
-- Gateway requests require `gateway_token`; an empty token fails closed.
+- Loopback gateway requests (`127.0.0.1` / `::1`) do not require `gateway_token`; non-loopback requests require a matching token and fail closed when it is empty.
 - `py_eval`, `patch_bytes`, `apply_patch`, and `dbg_*` tools are unsafe and gated by `enable_unsafe=false` by default in `ida_mcp/config.conf`.
 
 ## Installation
@@ -375,3 +375,25 @@ debugger. API call logs are written to `.artifacts/api_logs/`.
 - `API.md` documents the MCP tools, resources, proxy behavior, and internal HTTP routes.
 - `project.md` explains repository responsibilities and module boundaries.
 - `roadmap.md` tracks current stabilization work.
+
+
+## MCP 2026-07-28 / sessionless transport
+
+The gateway now targets the MCP `2026-07-28` modern transport with FastMCP 4 / MCP SDK 2. Modern requests use per-request `_meta` negotiation and `MCP-Protocol-Version: 2026-07-28`; they do not require `initialize` or `Mcp-Session-Id`. The gateway uses one JSON response per request (`application/json`) and remains loopback-accessible without a token. Legacy initialize/session clients remain accepted by default; set `mcp_legacy_protocol = false` to reject handshake-era requests (`initialize`, `notifications/initialized`, or a handshake-era `MCP-Protocol-Version` header) with a `-32601` JSON-RPC error so only `2026-07-28` traffic is served.
+
+The compatibility knobs are:
+
+```ini
+mcp_protocol_version = "2026-07-28"
+mcp_sessionless = true
+mcp_json_response = true
+mcp_legacy_protocol = true
+```
+
+Non-loopback clients must supply the configured `gateway_token` as a bearer token; loopback requests remain exempt from authentication.
+
+Modern protocol contract tests:
+
+```powershell
+python -m pytest test/test_lifecycle.py -k modern_2026 -q
+```

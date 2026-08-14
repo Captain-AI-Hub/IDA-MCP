@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import socket
 import threading
@@ -14,7 +15,14 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from . import instance_registry as registry
-from .config import get_gateway_token, get_request_timeout
+from .config import (
+    get_gateway_token,
+    get_mcp_protocol_version,
+    get_request_timeout,
+    is_mcp_json_response_enabled,
+    is_mcp_legacy_protocol_enabled,
+    is_mcp_sessionless_enabled,
+)
 
 
 LOCALHOST = "127.0.0.1"
@@ -40,9 +48,18 @@ def _request_token(request: Request) -> str | None:
 def is_gateway_request_authorized(request: Request) -> bool:
     """Authorize gateway access.
 
-    All gateway requests must supply the configured bearer token.  An empty
-    gateway_token is treated as a missing credential and fails closed.
+    Loopback clients are trusted because the gateway is a local control plane.
+    Non-loopback clients must supply the configured bearer token; an empty
+    gateway_token still fails closed for remote access.
     """
+    client = request.client
+    if client is not None:
+        try:
+            if ipaddress.ip_address(client.host).is_loopback:
+                return True
+        except ValueError:
+            pass
+
     configured_token = get_gateway_token()
     supplied_token = _request_token(request)
     if configured_token:
@@ -110,6 +127,12 @@ async def _healthz(_: Request) -> JSONResponse:
             "gateway_proxy": registry._gateway_proxy_status(),
             "instance_count": len(registry._instances),
             "started_at": registry._gateway_started_at,
+            "mcp": {
+                "protocol_version": get_mcp_protocol_version(),
+                "sessionless": is_mcp_sessionless_enabled(),
+                "json_response": is_mcp_json_response_enabled(),
+                "legacy_protocol": is_mcp_legacy_protocol_enabled(),
+            },
         }
     )
 

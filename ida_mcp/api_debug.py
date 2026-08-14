@@ -15,6 +15,8 @@ Provides tools:
     - dbg_step_over  step over
     - dbg_read_mem  read debug memory
     - dbg_write_mem  write debug memory
+    - dbg_status  get debugger status
+    - dbg_thread_regs  read per-thread registers
 """
 from __future__ import annotations
 
@@ -23,6 +25,7 @@ from typing import Annotated, Optional, List, Dict, Any, Union
 from .rpc import tool, unsafe
 from .sync import idaread, idawrite
 from .utils import parse_address, normalize_list_input, hex_addr
+from . import ida_shims
 
 # IDA module imports
 try:
@@ -181,9 +184,9 @@ def dbg_callstack() -> dict:
                     ea = int(getattr(item, 'ea', 0))
                     func_name = None
                     try:
-                        f = ida_funcs.get_func(ea)
-                        if f:
-                            func_name = idaapi.get_func_name(f.start_ea)
+                        fstart = ida_shims.func_start(ea)
+                        if fstart is not None:
+                            func_name = idaapi.get_func_name(fstart)
                     except Exception:
                         func_name = None
                     frames.append({
@@ -207,9 +210,9 @@ def dbg_callstack() -> dict:
                         ea = int(getattr(entry, 'ea', 0))
                         func_name = None
                         try:
-                            f = ida_funcs.get_func(ea)
-                            if f:
-                                func_name = idaapi.get_func_name(f.start_ea)
+                            fstart = ida_shims.func_start(ea)
+                            if fstart is not None:
+                                func_name = idaapi.get_func_name(fstart)
                         except Exception:
                             func_name = None
                         frames.append({
@@ -949,7 +952,7 @@ def dbg_write_mem(
         try:
             byte_data = bytes(data)
             written = ida_dbg.write_dbg_memory(address, byte_data)
-            
+
             results.append({
                 "address": hex_addr(address),
                 "size": len(byte_data),
@@ -957,5 +960,160 @@ def dbg_write_mem(
             })
         except Exception as e:
             results.append({"error": str(e), "address": hex_addr(address)})
-    
+
     return results
+
+
+# ============================================================================
+# Status and per-thread registers
+# ============================================================================
+
+
+@unsafe
+@tool
+@idaread
+def dbg_status() -> dict:
+    """Get debugger status: state, pid, threads, current instruction pointer."""
+    try:
+        if not ida_dbg.is_debugger_on():
+            return {"ok": False, "debugger_on": False, "note": "debugger not active"}
+    except Exception:
+        return {"error": "cannot determine debugger state"}
+
+    result: Dict[str, Any] = {"ok": True, "debugger_on": True}
+
+    try:
+        state_code = ida_dbg.get_process_state()
+        state_names = {
+            getattr(ida_dbg, "DSTATE_SUSP", -1): "suspended",
+            getattr(ida_dbg, "DSTATE_RUN", -2): "running",
+            getattr(ida_dbg, "DSTATE_NOTASK", -3): "no_process",
+        }
+        result["state"] = state_names.get(state_code, f"unknown({state_code})")
+    except Exception as e:
+        result["state"] = None
+        result.setdefault("notes", []).append(f"get_process_state: {e}")
+
+    try:
+        result["pid"] = int(ida_dbg.get_pid())
+    except Exception:
+        result["pid"] = None
+
+    try:
+        threads = []
+        for i in range(ida_dbg.get_thread_qty()):
+            threads.append(int(ida_dbg.getn_thread(i)))
+        result["threads"] = threads
+        result["current_thread"] = int(ida_dbg.get_current_thread())
+    except Exception as e:
+        result["threads"] = []
+        result.setdefault("notes", []).append(f"thread list: {e}")
+
+    try:
+        ip = ida_dbg.get_ip_val()
+        result["ip"] = hex_addr(int(ip)) if ip is not None else None
+    except Exception:
+        result["ip"] = None
+
+    try:
+        sp = ida_dbg.get_sp_val()
+        result["sp"] = hex_addr(int(sp)) if sp is not None else None
+    except Exception:
+        result["sp"] = None
+
+    return result
+
+
+@unsafe
+@tool
+@idawrite
+def dbg_thread_regs(
+    thread_ids: Annotated[Optional[Union[int, str, List[int]]], "Thread ID(s) in decimal (comma-separated ok); omit for all threads"] = None,
+    names: Annotated[Optional[str], "Comma-separated register names to read; omit for all registers"] = None,
+) -> dict:
+    """Read registers of one or more debug threads (temporarily selects each thread, then restores)."""
+    try:
+        if not ida_dbg.is_debugger_on():
+            return {"ok": False, "threads": [], "note": "debugger not active"}
+    except Exception:
+        return {"error": "cannot determine debugger state"}
+
+    susp = getattr(ida_dbg, "DSTATE_SUSP", None)
+    try:
+        if susp is not None and ida_dbg.get_process_state() != susp:
+            return {"ok": False, "threads": [], "note": "process is not suspended"}
+    except Exception:
+        pass
+
+    # resolve target threads
+    tids: List[int] = []
+    if thread_ids is None:
+        try:
+            for i in range(ida_dbg.get_thread_qty()):
+                tids.append(int(ida_dbg.getn_thread(i)))
+        except Exception as e:
+            return {"error": f"cannot enumerate threads: {e}"}
+    else:
+        for raw in normalize_list_input(thread_ids):
+            try:
+                tids.append(int(str(raw), 0))
+            except ValueError:
+                return {"error": f"invalid thread id: {raw}"}
+
+    # register name filter
+    wanted: Optional[List[str]] = None
+    if names:
+        wanted = [n.strip() for n in str(names).split(",") if n.strip()]
+
+    def _read_current_thread_regs() -> List[dict]:
+        reg_names = wanted
+        if reg_names is None:
+            try:
+                if hasattr(ida_dbg, "get_dbg_reg_names"):
+                    reg_names = list(ida_dbg.get_dbg_reg_names())  # type: ignore
+            except Exception:
+                reg_names = None
+        if not reg_names:
+            reg_names = ["RAX", "RBX", "RCX", "RDX", "RSI", "RDI", "RBP", "RSP",
+                         "R8", "R9", "R10", "R11", "R12", "R13", "R14", "R15",
+                         "RIP", "RFLAGS"]
+
+        regs: List[dict] = []
+        for reg_name in reg_names:
+            try:
+                v = ida_dbg.get_reg_val(reg_name)
+            except Exception:
+                continue
+            if v is None:
+                continue
+            if isinstance(v, int):
+                width = 16 if v > 0xFFFFFFFF else 8
+                regs.append({"name": reg_name, "value": f"0x{v:0{width}X}", "int": int(v)})
+            else:
+                regs.append({"name": reg_name, "value": repr(v)})
+        return regs
+
+    try:
+        current = int(ida_dbg.get_current_thread())
+    except Exception:
+        current = None
+
+    threads: List[dict] = []
+    try:
+        for tid in tids:
+            try:
+                if current is not None and tid != current:
+                    if not ida_dbg.select_thread(tid):
+                        threads.append({"tid": tid, "error": "select_thread failed"})
+                        continue
+                threads.append({"tid": tid, "registers": _read_current_thread_regs()})
+            except Exception as e:
+                threads.append({"tid": tid, "error": str(e)})
+    finally:
+        if current is not None:
+            try:
+                ida_dbg.select_thread(current)
+            except Exception:
+                pass
+
+    return {"ok": True, "threads": threads}

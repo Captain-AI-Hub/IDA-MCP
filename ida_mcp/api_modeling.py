@@ -16,6 +16,7 @@ from .rpc import tool
 from .strings_cache import invalidate_strings_cache
 from .sync import idawrite, wait_for_auto_analysis
 from .utils import parse_address, hex_addr
+from . import ida_shims
 
 try:
     import idaapi  # type: ignore
@@ -73,22 +74,22 @@ def _describe_function(ea: int) -> Optional[dict]:
         return None
 
     try:
-        func = ida_funcs.get_func(ea)
+        bounds = ida_shims.func_bounds(ea)
     except Exception:
-        func = None
+        bounds = None
 
-    if not func:
+    if not bounds:
         return None
 
     try:
-        name = idaapi.get_func_name(func.start_ea)
+        name = idaapi.get_func_name(bounds[0])
     except Exception:
         name = None
 
     return {
         "name": name,
-        "start_ea": hex_addr(int(func.start_ea)),
-        "end_ea": hex_addr(int(func.end_ea)),
+        "start_ea": hex_addr(int(bounds[0])),
+        "end_ea": hex_addr(int(bounds[1])),
     }
 
 

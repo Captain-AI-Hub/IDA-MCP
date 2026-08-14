@@ -8,6 +8,7 @@ from __future__ import annotations
 import ast
 import contextlib
 import io
+import os
 import traceback
 from typing import Annotated
 
@@ -163,3 +164,20 @@ def py_eval(
             "stdout": stdout_capture.getvalue(),
             "stderr": traceback.format_exc(),
         }
+
+
+@unsafe
+@tool
+@idawrite
+def py_exec_file(
+    file_path: Annotated[str, "Absolute path to a Python script to execute"],
+) -> dict:
+    """Execute a Python script file in IDA context and capture output."""
+    if not os.path.isfile(file_path):
+        return {"result": "", "stdout": "", "stderr": f"File not found: {file_path}"}
+    try:
+        with open(file_path, "r", encoding="utf-8") as handle:
+            code = handle.read()
+    except Exception as exc:
+        return {"result": "", "stdout": "", "stderr": str(exc)}
+    return py_eval.__wrapped__(code)

@@ -21,7 +21,7 @@
 
 说明：
 
-- `http_host` 控制 gateway 监听地址；所有 gateway 请求都必须携带匹配的 `gateway_token`，为空时网关拒绝请求
+- `http_host` 控制 gateway 监听地址；来自 `127.0.0.1` / `::1` 的本机请求无需 token，非本机请求必须携带匹配的 `gateway_token`，为空时拒绝远程请求
 - Gateway MCP proxy 的默认 URL 由 `config.conf` 中的 `http_host/http_port/http_path` 决定
 - Direct instance 端点固定为 `http://127.0.0.1:<instance_port>/mcp/`
 
@@ -158,7 +158,7 @@ gateway/control 面的包装错误常见格式：
 
 以下工具在 Gateway MCP proxy 上也可用，但会额外接受 `port?` 与 `timeout?`。
 
-如果 `enable_unsafe=false`，则 `py_eval`、`patch_bytes`、`apply_patch` 与全部 `dbg_*` 工具不会注册。
+如果 `enable_unsafe=false`，则 `py_eval`、`patch_bytes`、`apply_patch`、`patch_asm`、`diff_before_after` 与全部 `dbg_*` 工具不会注册。
 
 ### 4.1 Core Tools
 
@@ -177,6 +177,7 @@ gateway/control 面的包装错误常见格式：
 | `list_exports` | `offset?: int`, `count?: int`, `pattern?: str` | `{"count":50}` | 分页结果；`items` 为 `[{ea, name, ordinal}]` |
 | `list_segments` | none | `{}` | `{total, items:[{name, start_ea, end_ea, size, perm, class, bitness}]}` |
 | `get_cursor` | none | `{}` | `{ea, ea_int, function?, selection?}` |
+| `survey_binary` | none | `{}` | `{metadata, counts:{functions, strings, imports, segments, entry_points}, segments, entry_points}` |
 
 ### 4.2 Analysis Tools
 
@@ -193,6 +194,11 @@ gateway/control 面的包装错误常见格式：
 | `xrefs_to_field` | `struct_name: str`, `field_name: str` | `{"struct_name":"MY_STRUCT","field_name":"vtable"}` | `{struct, field, offset, matches, truncated?, note?}`；`matches` 为 `[{ea, line}]` |
 | `find_bytes` | `pattern: str`, `start?: str`, `end?: str`, `limit?: int` | `{"pattern":"48 8B ?? ?? 48 89","limit":20}` | `{pattern, ida_pattern, total, matches, truncated?}`；`matches` 为 `[{ea, bytes, function}]` |
 | `get_basic_blocks` | `addr: int | str` | `{"addr":"main"}` | `{query, function, start_ea, end_ea, total, blocks}`；`blocks` 为 `[{start_ea, end_ea, size, predecessors, successors, type?}]` |
+| `find_regex` | `pattern: str`, `limit?: int`, `offset?: int` | `{"pattern":"^sub_40"}` | `{pattern, count, items:[{ea, name}], truncated?}` |
+| `search_text` | `query: str`, `regex?: bool`, `limit?: int` | `{"query":"CreateFile"}` | `{query, regex, count, items:[{ea, text, comment, function}], truncated?}` |
+| `find_instructions` | `mnemonic?: str`, `pattern?: str`, `limit?: int` | `{"mnemonic":"call","pattern":"recv"}` | `{mnemonic, pattern, count, items:[{ea, mnemonic, text, function}], truncated?}` |
+| `callgraph` | `roots: int | str | list`, `max_depth?: int`, `max_nodes?: int` | `{"roots":"main","max_depth":3}` | `{roots, total_nodes, total_edges, nodes:[{ea, name, depth}], edges:[{caller, callee}], truncated?}` |
+| `trace_data_flow` | `address: int | str`, `direction?: str`, `max_depth?: int`, `max_nodes?: int` | `{"address":"g_state","direction":"both"}` | `{query, start, direction, nodes:[{ea, name, depth}], edges:[{frm, to, type}], truncated?}` |
 
 ### 4.3 Memory Tools
 
@@ -239,6 +245,11 @@ gateway/control 面的包装错误常见格式：
 | `rename_global_variable` | `old_name: str`, `new_name: str` | `{"old_name":"dword_404000","new_name":"g_state"}` | `{ea, old_name, new_name, changed, note?}` 或 `{error}` |
 | `patch_bytes` | `items: [{address, bytes}]` | `{"items":[{"address":"0x401000","bytes":"90 90 90"}]}` | `[{address, size, patched, old_bytes, new_bytes, error}]` |
 | `apply_patch` | `output_path?: str`, `overwrite?: bool` | `{"output_path":"a.patched.exe","overwrite":false}` | `{input_file, output_file, input_size, applied, skipped, patches, skipped_patches, truncated}` 或 `{error}` |
+| `add_bookmark` | `address: int | str`, `description?: str` | `{"address":"0x401000","description":"entry"}` | `{address, slot, description, added}` 或 `{error}` |
+| `patch_asm` (unsafe) | `items: [{address, asm}]` | `{"items":[{"address":"0x401000","asm":"nop"}]}` | `[{address, asm, bytes, size, patched}]` 或每项 `{error}` |
+| `set_op_type` | `items: [{address, type, operand?}]` | `{"items":[{"address":"0x401010","type":"char"}]}` | `[{address, operand, type, applied}]`；type 支持 hex/dec/oct/bin/char/stkvar |
+| `force_recompile` | `addresses?: int | str | list` | `{"addresses":"main"}` | `{cleared:"all"}` 或 `{cleared:"selected", results:[{address, marked_dirty}]}` |
+| `diff_before_after` (unsafe) | `address: int | str`, `action: str`, `action_args?: obj` | `{"address":"main","action":"rename_function","action_args":{"address":"main","new_name":"entry"}}` | `{query, function, action, action_result, changed, diff, truncated?}` 或 `{error}` |
 
 ### 4.6 Stack Tools
 
@@ -260,6 +271,7 @@ gateway/control 面的包装错误常见格式：
 | `set_global_variable_type` | `variable_name: str`, `new_type: str` | `{"variable_name":"g_state","new_type":"int"}` | `{ea, variable_name, old_type, new_type, applied}` 或 `{error}` |
 | `list_structs` | `pattern?: str` | `{"pattern":"web*"}` | `{total, items:[{ordinal, name, kind, size, members}]}` |
 | `get_struct_info` | `name: str` | `{"name":"MY_S"}` | `{name, kind, size, members, member_count}` 或 `{error}` |
+| `infer_types` | `addresses: int | str | list` | `{"addresses":"0x404000,g_state"}` | `[{query, address, type, applied}]` 或每项 `{error}` |
 
 ### 4.8 Python Tool
 
@@ -291,6 +303,8 @@ gateway/control 面的包装错误常见格式：
 | `dbg_step_over` | none | `{}` | `{ok, stepped, note?}` 或 `{error}` |
 | `dbg_read_mem` | `regions: [{address, size}]` | `{"regions":[{"address":"0x7FF600001000","size":32}]}` | `[{address, size, bytes, hex, error}]` |
 | `dbg_write_mem` | `regions: [{address, bytes}]` | `{"regions":[{"address":"0x7FF600001000","bytes":[144,144]}]}` | `[{address, size, written, error}]` |
+| `dbg_status` | none | `{}` | `{ok, debugger_on, state, pid, threads, current_thread, ip, sp}` |
+| `dbg_thread_regs` | `thread_ids?: int | str | list`, `names?: str` | `{"names":"RIP,RSP"}` | `{ok, threads:[{tid, registers:[{name, value, int?}]}]}` |
 
 说明：
 
@@ -302,6 +316,7 @@ gateway/control 面的包装错误常见格式：
 | Tool | Parameters | Request Example | Expected Response |
 | --- | --- | --- | --- |
 | `close_ida` | `save?: bool` | `{"save":true}` | `{status:"ok", message:"IDA is closing"}` 或 `{error}` |
+| `save_idb` | `path?: str` | `{}` | `{saved: true, path}` 或 `{error}` |
 
 ## 5. Resource Catalog
 
@@ -383,7 +398,7 @@ Base URL:
 http://127.0.0.1:11338/internal
 ```
 
-`http_host` 控制 gateway 监听地址。请求必须携带共享 token；`gateway_token` 为空时网关拒绝请求：
+`http_host` 控制 gateway 监听地址。来自 `127.0.0.1` / `::1` 的本机请求无需 token；非本机请求必须携带共享 token，且 `gateway_token` 为空时拒绝远程请求：
 
 ```http
 Authorization: Bearer <gateway_token>
@@ -455,3 +470,18 @@ Authorization: Bearer <gateway_token>
 - Gateway MCP proxy：主要用于多实例 tools
 - Direct instance MCP：用于 tools + `ida://` resources
 - 内部 HTTP：只给 gateway/proxy/runtime 使用，不建议普通 MCP client 直接依赖
+
+## MCP 2026-07-28 / sessionless transport
+
+Gateway MCP HTTP 已切换到 MCP `2026-07-28` 现代无状态传输：请求通过 `MCP-Protocol-Version` 和 `params._meta` 携带协议版本、client capabilities 等 envelope，不依赖 `initialize` 或 `Mcp-Session-Id`；默认返回单个 `application/json` 响应。旧版 initialize/session 客户端默认继续兼容；将 `mcp_legacy_protocol` 设为 `false` 后，握手时代的请求（`initialize`、`notifications/initialized` 或携带旧版 `MCP-Protocol-Version` 头）会被网关与实例服务器以 `-32601` JSON-RPC 错误拒绝，仅服务 `2026-07-28` 流量。
+
+配置项：
+
+```ini
+mcp_protocol_version = "2026-07-28"
+mcp_sessionless = true
+mcp_json_response = true
+mcp_legacy_protocol = true
+```
+
+非 loopback 客户端需携带配置的 `gateway_token` 作为 bearer token；本机 loopback 继续免认证。

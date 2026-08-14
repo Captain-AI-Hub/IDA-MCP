@@ -2,7 +2,7 @@
   "IDAMetadataDescriptorVersion": 1,
   "plugin": {
     "name": "IDA-MCP",
-    "version": "0.6.3",
+    "version": "0.7.0",
     "entryPoint": "ida_mcp.py",
     "urls": {
       "repository": "https://github.com/Captain-AI-Hub/IDA-MCP"
@@ -29,10 +29,11 @@
     ],
     "idaVersions": ">=9.0",
     "pythonDependencies": [
-      "fastmcp",
-      "starlette",
-      "uvicorn",
-      "pydantic",
+      "fastmcp>=4.0.0b1,<5",
+      "mcp>=2.0.0,<3",
+      "starlette>=1.0.1,<2",
+      "uvicorn>=0.35,<1",
+      "pydantic>=2.12,<3",
       "ida-settings>=3,<4"
     ],
     "settings": [
@@ -135,6 +136,42 @@
         "documentation": "HTTP path exposed by the standalone MCP gateway.",
         "validation_pattern": "/.*",
         "prompt": true
+      },
+      {
+        "key": "mcp_protocol_version",
+        "type": "string",
+        "required": false,
+        "default": "2026-07-28",
+        "name": "MCP protocol version",
+        "documentation": "Modern sessionless MCP protocol revision advertised by the gateway.",
+        "prompt": false
+      },
+      {
+        "key": "mcp_sessionless",
+        "type": "boolean",
+        "required": false,
+        "default": true,
+        "name": "Sessionless MCP HTTP",
+        "documentation": "Use per-request MCP HTTP without Mcp-Session-Id.",
+        "prompt": false
+      },
+      {
+        "key": "mcp_json_response",
+        "type": "boolean",
+        "required": false,
+        "default": true,
+        "name": "MCP JSON responses",
+        "documentation": "Return one application/json response for modern requests instead of SSE framing.",
+        "prompt": false
+      },
+      {
+        "key": "mcp_legacy_protocol",
+        "type": "boolean",
+        "required": false,
+        "default": true,
+        "name": "Legacy MCP compatibility",
+        "documentation": "Continue accepting pre-2026 initialize/session clients.",
+        "prompt": false
       },
       {
         "key": "request_timeout",

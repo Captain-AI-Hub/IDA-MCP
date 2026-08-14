@@ -26,6 +26,7 @@ from ida_mcp import config
 from ida_mcp import instance_registry
 from ida_mcp import instance_server
 from ida_mcp import plugin_runtime
+from ida_mcp import protocol_guard
 from ida_mcp import registry
 from ida_mcp import registry_routes
 from ida_mcp import registry_server
@@ -861,8 +862,19 @@ class TestRegistryStartup:
 
         with patch.object(
             registry_server.proxy_server, "http_app", return_value=fake_mcp_app
-        ):
+        ) as mock_http_app:
             app = registry_server._build_app()
+
+        mock_http_app.assert_called_once_with(
+            path=registry_server.MCP_PATH,
+            stateless_http=registry_server.is_mcp_sessionless_enabled(),
+            json_response=registry_server.is_mcp_json_response_enabled(),
+            session_idle_timeout=None,
+            middleware=mock_http_app.call_args.kwargs["middleware"],
+        )
+        gate = mock_http_app.call_args.kwargs["middleware"]
+        assert len(gate) == 1
+        assert gate[0].cls is protocol_guard.LegacyProtocolGateMiddleware
 
         async def _run_lifespan():
             assert instance_registry._gateway_proxy_ready is False
@@ -874,6 +886,147 @@ class TestRegistryStartup:
 
         asyncio.run(_run_lifespan())
         assert fake_mcp_app.lifespan_calls == [app]
+
+    def test_build_app_exposes_2026_sessionless_requests(self):
+        """Modern MCP requests use the 2026 per-request envelope and JSON output."""
+        app = registry_server._build_app()
+        assert app is not None
+        assert registry_server.MCP_PATH == "/mcp"
+
+    def test_modern_2026_discover_request_is_sessionless_json(self):
+        """MCP 2026-07-28 server/discover works without initialize or session ID."""
+        from starlette.testclient import TestClient
+
+        body = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "server/discover",
+            "params": {"_meta": {"io.modelcontextprotocol/clientCapabilities": {}, "io.modelcontextprotocol/protocolVersion": "2026-07-28"}},
+        }
+        headers = {"Accept": "application/json", "Content-Type": "application/json", "MCP-Protocol-Version": "2026-07-28", "mcp-method": "server/discover"}
+        with TestClient(registry_server._build_app(), client=("127.0.0.1", 12345)) as client:
+            response = client.post(registry_server.MCP_PATH, json=body, headers=headers)
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("application/json")
+        assert "Mcp-Session-Id" not in response.headers
+        result = response.json()["result"]
+        assert "2026-07-28" in result["supportedVersions"]
+        assert result["ttlMs"] >= 0
+        assert result["resultType"] == "complete"
+
+    def test_modern_2026_tools_list_has_no_session_header(self):
+        """MCP 2026-07-28 tools/list uses per-request metadata and no session."""
+        body = {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/list",
+            "params": {"_meta": {"io.modelcontextprotocol/clientInfo": {"name": "test", "version": "1"}, "io.modelcontextprotocol/clientCapabilities": {}, "io.modelcontextprotocol/protocolVersion": "2026-07-28"}},
+        }
+        headers = {"Accept": "application/json", "Content-Type": "application/json", "MCP-Protocol-Version": "2026-07-28", "mcp-method": "tools/list"}
+        with TestClient(registry_server._build_app(), client=("127.0.0.1", 12345)) as client:
+            response = client.post(registry_server.MCP_PATH, json=body, headers=headers)
+        assert response.status_code == 200
+        assert "Mcp-Session-Id" not in response.headers
+        assert response.json()["result"]["resultType"] == "complete"
+
+    def _legacy_initialize_body(self):
+        return {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "test", "version": "1"},
+            },
+        }
+
+    def test_legacy_initialize_accepted_when_legacy_protocol_enabled(self, monkeypatch):
+        """mcp_legacy_protocol=true（默认）时旧 initialize 客户端仍可使用。"""
+        monkeypatch.setattr(protocol_guard, "is_mcp_legacy_protocol_enabled", lambda: True)
+        headers = {
+            "Accept": "application/json, text/event-stream",
+            "Content-Type": "application/json",
+            "MCP-Protocol-Version": "2025-11-25",
+        }
+        with TestClient(registry_server._build_app(), client=("127.0.0.1", 12345)) as client:
+            response = client.post(
+                registry_server.MCP_PATH, json=self._legacy_initialize_body(), headers=headers
+            )
+        assert response.status_code == 200
+        assert response.json()["result"]["protocolVersion"] == "2025-11-25"
+
+    def test_legacy_initialize_rejected_when_legacy_protocol_disabled(self, monkeypatch):
+        """mcp_legacy_protocol=false 时按 MCP 2026-07-28 拒绝握手请求。"""
+        monkeypatch.setattr(protocol_guard, "is_mcp_legacy_protocol_enabled", lambda: False)
+        headers = {
+            "Accept": "application/json, text/event-stream",
+            "Content-Type": "application/json",
+            "MCP-Protocol-Version": "2025-11-25",
+        }
+        with TestClient(registry_server._build_app(), client=("127.0.0.1", 12345)) as client:
+            response = client.post(
+                registry_server.MCP_PATH, json=self._legacy_initialize_body(), headers=headers
+            )
+        assert response.status_code == 400
+        error = response.json()["error"]
+        assert error["code"] == -32601
+        assert "2026-07-28" in error["message"]
+
+    def test_legacy_initialize_without_version_header_rejected(self, monkeypatch):
+        """2025-03-26 时代客户端不带 MCP-Protocol-Version，也应通过方法名识别并拒绝。"""
+        monkeypatch.setattr(protocol_guard, "is_mcp_legacy_protocol_enabled", lambda: False)
+        headers = {
+            "Accept": "application/json, text/event-stream",
+            "Content-Type": "application/json",
+        }
+        with TestClient(registry_server._build_app(), client=("127.0.0.1", 12345)) as client:
+            response = client.post(
+                registry_server.MCP_PATH, json=self._legacy_initialize_body(), headers=headers
+            )
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == -32601
+
+    def test_modern_request_unaffected_when_legacy_protocol_disabled(self, monkeypatch):
+        """关闭 legacy 兼容后，2026-07-28 server/discover 请求不受影响。"""
+        monkeypatch.setattr(protocol_guard, "is_mcp_legacy_protocol_enabled", lambda: False)
+        body = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "server/discover",
+            "params": {"_meta": {"io.modelcontextprotocol/clientCapabilities": {}, "io.modelcontextprotocol/protocolVersion": "2026-07-28"}},
+        }
+        headers = {"Accept": "application/json", "Content-Type": "application/json", "MCP-Protocol-Version": "2026-07-28", "mcp-method": "server/discover"}
+        with TestClient(registry_server._build_app(), client=("127.0.0.1", 12345)) as client:
+            response = client.post(registry_server.MCP_PATH, json=body, headers=headers)
+        assert response.status_code == 200
+        assert "2026-07-28" in response.json()["result"]["supportedVersions"]
+
+    def test_gateway_auth_allows_loopback_without_token(self, monkeypatch):
+        monkeypatch.setattr(registry_routes, "get_gateway_token", lambda: None)
+
+        class Client:
+            host = "127.0.0.1"
+
+        class Request:
+            client = Client()
+            headers = {}
+
+        assert registry_routes.is_gateway_request_authorized(Request()) is True
+
+    def test_gateway_auth_still_requires_token_for_remote_clients(self, monkeypatch):
+        monkeypatch.setattr(registry_routes, "get_gateway_token", lambda: "secret")
+
+        class Client:
+            host = "192.0.2.10"
+
+        class Request:
+            client = Client()
+            headers = {}
+
+        assert registry_routes.is_gateway_request_authorized(Request()) is False
+        Request.headers = {"Authorization": "Bearer secret"}
+        assert registry_routes.is_gateway_request_authorized(Request()) is True
 
     def test_gateway_register_preserves_failure_health_metadata(
         self, monkeypatch, isolated_gateway_state
@@ -1222,6 +1375,30 @@ class TestRegistryStartup:
 
         assert mock_ensure.call_count == 1
         assert mock_request.call_count == 2
+
+    def test_ensure_registry_server_allows_empty_token_on_loopback(self):
+        with patch("ida_mcp.registry.get_http_bind_host", return_value="127.0.0.1"):
+            with patch("ida_mcp.registry.get_gateway_token", return_value=None):
+                with patch("ida_mcp.registry._gateway_ready", side_effect=[False, False, True]):
+                    with patch("ida_mcp.registry._gateway_internal_alive", return_value=False):
+                        with patch("ida_mcp.registry._spawn_detached") as mock_spawn:
+                            with patch(
+                                "ida_mcp.registry._resolve_python_executable",
+                                return_value="/usr/bin/python3",
+                            ):
+                                assert registry.ensure_registry_server(startup_timeout=0.3) is True
+
+        assert mock_spawn.call_count == 1
+
+    def test_ensure_registry_server_requires_token_on_remote_bind(self):
+        with patch("ida_mcp.registry.get_http_bind_host", return_value="0.0.0.0"):
+            with patch("ida_mcp.registry.get_gateway_token", return_value=None):
+                with patch("ida_mcp.registry._spawn_detached") as mock_spawn:
+                    assert registry.ensure_registry_server(startup_timeout=0.3) is False
+
+        assert mock_spawn.call_count == 0
+        assert registry._launch_status["registry_server"]["requested"] is False
+        assert "not loopback" in registry._launch_status["registry_server"]["last_error"]
 
     def test_ensure_registry_server_spawns_detached_daemon(self):
         """网关不可达时，应拉起独立 daemon，而不是依赖当前 IDA。"""

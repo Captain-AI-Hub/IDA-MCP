@@ -11,7 +11,6 @@ import threading
 import time
 import traceback
 from contextlib import asynccontextmanager
-from typing import Any, Dict, List, Optional
 
 if __package__ in {None, ""}:
     repo_root = pathlib.Path(__file__).resolve().parents[1]
@@ -23,9 +22,13 @@ if __package__ in {None, ""}:
         get_http_path,
         get_http_port,
         get_request_timeout,
+        is_mcp_json_response_enabled,
+        is_mcp_sessionless_enabled,
     )
     from ida_mcp.proxy._server import server as proxy_server
+    from ida_mcp.protocol_guard import LegacyProtocolGateMiddleware
     import ida_mcp.instance_registry as instance_registry
+    import ida_mcp.registry as registry_client
     import ida_mcp.registry_routes as registry_routes
     from ida_mcp.registry_routes import (
         _call_handler,
@@ -50,9 +53,12 @@ else:
         get_http_path,
         get_http_port,
         get_request_timeout,
+        is_mcp_json_response_enabled,
+        is_mcp_sessionless_enabled,
     )
     from .proxy._server import server as proxy_server
-    from . import instance_registry, registry_routes
+    from .protocol_guard import LegacyProtocolGateMiddleware
+    from . import instance_registry, registry as registry_client, registry_routes
     from .registry_routes import (
         _call_handler,
         _current_instance_handler,
@@ -89,7 +95,11 @@ REQUEST_TIMEOUT = get_request_timeout()
 class _GatewayAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):  # type: ignore[no-untyped-def]
         if not is_gateway_request_authorized(request):
-            return JSONResponse({"error": "unauthorized"}, status_code=401)
+            return JSONResponse(
+                {"error": "unauthorized"},
+                status_code=401,
+                headers={"WWW-Authenticate": "Bearer"},
+            )
         return await call_next(request)
 
 
@@ -114,7 +124,19 @@ def _build_internal_app() -> Starlette:
 
 
 def _build_app() -> Starlette:
-    mcp_app = proxy_server.http_app(path=MCP_PATH)  # type: ignore[attr-defined]
+    # Tool calls do not need long-lived server-side sessions. Stateless HTTP
+    # also lets clients recover cleanly after a gateway restart instead of
+    # sending an obsolete Mcp-Session-Id and receiving "Session not found".
+    mcp_app = proxy_server.http_app(  # type: ignore[attr-defined]
+        path=MCP_PATH,
+        stateless_http=is_mcp_sessionless_enabled(),
+        json_response=is_mcp_json_response_enabled(),
+        # The MCP 2026-07-28 transport performs per-request negotiation and
+        # dispatches modern requests without initialize/session state.
+        session_idle_timeout=None,
+        # Reject handshake-era clients outright when mcp_legacy_protocol=false.
+        middleware=[Middleware(LegacyProtocolGateMiddleware)],
+    )
 
     @asynccontextmanager
     async def gateway_lifespan(app: Starlette):
@@ -159,7 +181,11 @@ def serve_forever(host: str = GATEWAY_BIND_HOST, port: int = GATEWAY_PORT) -> No
         app, host=host, port=port, log_level="warning", access_log=False
     )
     registry_routes._uvicorn_server = uvicorn.Server(config)
-    registry_routes._uvicorn_server.run()
+    registry_client.write_gateway_pid()
+    try:
+        registry_routes._uvicorn_server.run()
+    finally:
+        registry_client.remove_gateway_pid()
 
 
 if __name__ == "__main__":

@@ -129,7 +129,10 @@ def _print_data_payload(payload: dict[str, Any]) -> None:
 
 
 def _cmd_gateway_start(args: argparse.Namespace) -> int:
-    payload = control.ensure_gateway_running(startup_timeout=args.timeout)
+    payload = control.ensure_gateway_running(
+        startup_timeout=args.timeout,
+        force=args.force,
+    )
     if args.json or "error" in payload:
         _dump_json(payload)
     else:
@@ -276,6 +279,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     gateway_start = gateway_subparsers.add_parser(
         "start", help="Start the standalone gateway"
+    )
+    gateway_start.add_argument(
+        "--force",
+        action="store_true",
+        help="Reclaim a stale IDA-MCP gateway listener before starting",
     )
     gateway_start.add_argument(
         "--timeout",

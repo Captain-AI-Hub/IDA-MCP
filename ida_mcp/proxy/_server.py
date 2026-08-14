@@ -31,6 +31,7 @@ from . import register_tools
 
 server = FastMCP(
     name="IDA-MCP-Proxy",
+    version="0.7.0",
     instructions="""IDA MCP 代理 - 通过网关访问多个 IDA 实例。
 
 核心管理:
@@ -44,23 +45,25 @@ server = FastMCP(
 - shutdown_gateway: 安全关闭独立网关进程
 
 核心工具:
-- list_functions, get_metadata, list_strings, list_globals, list_local_types, get_entry_points, convert_number
+- list_functions, get_metadata, survey_binary, list_strings, list_globals, list_local_types, get_entry_points, convert_number
 
 分析工具:
-- decompile, disasm, linear_disasm, xrefs_to, xrefs_from
+- decompile, disasm, linear_disasm, xrefs_to, xrefs_from, callgraph, trace_data_flow
+- find_bytes, find_regex, search_text, find_instructions
 
 修改工具:
 - set_comment, rename_function, rename_global_variable, rename_local_variable
+- patch_bytes, patch_asm, set_op_type, add_bookmark, force_recompile, diff_before_after
 
 内存工具:
 - get_bytes, read_scalar, get_string
 
 类型工具:
-- set_function_prototype, set_local_variable_type, set_global_variable_type, declare_struct, declare_enum, declare_typedef
+- set_function_prototype, set_local_variable_type, set_global_variable_type, declare_struct, declare_enum, declare_typedef, infer_types
 
 调试工具:
-- dbg_start, dbg_exit, dbg_continue, dbg_step_into, dbg_step_over
-- dbg_regs, dbg_callstack, dbg_add_bp, dbg_delete_bp, dbg_list_bps
+- dbg_start, dbg_exit, dbg_continue, dbg_step_into, dbg_step_over, dbg_status
+- dbg_regs, dbg_thread_regs, dbg_callstack, dbg_add_bp, dbg_delete_bp, dbg_list_bps
 
 栈帧工具:
 - stack_frame, declare_stack, delete_stack

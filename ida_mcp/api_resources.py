@@ -9,6 +9,7 @@ from .strings_cache import get_strings_cache
 from .sync import idaread
 from .type_utils import iter_local_type_ordinals
 from .utils import hex_addr
+from . import ida_shims
 
 try:
     import idaapi  # type: ignore
@@ -88,16 +89,16 @@ def _function_summary(ea: int) -> Optional[dict[str, Any]]:
     if ida_funcs is None or idaapi is None:
         return None
     try:
-        fn = ida_funcs.get_func(ea)
+        bounds = ida_shims.func_bounds(ea)
     except Exception:
-        fn = None
-    if not fn:
+        bounds = None
+    if not bounds:
         return None
     return {
-        "address": hex_addr(fn.start_ea),
-        "name": idaapi.get_func_name(fn.start_ea),
-        "end_address": hex_addr(fn.end_ea),
-        "size": int(fn.end_ea) - int(fn.start_ea),
+        "address": hex_addr(bounds[0]),
+        "name": idaapi.get_func_name(bounds[0]),
+        "end_address": hex_addr(bounds[1]),
+        "size": int(bounds[1]) - int(bounds[0]),
     }
 
 
@@ -106,7 +107,7 @@ def _list_functions_items() -> list[dict[str, Any]]:
     if idautils is None:
         return items
     try:
-        for ea in idautils.Functions():
+        for ea in ida_shims.iter_function_starts():
             summary = _function_summary(int(ea))
             if summary:
                 items.append(summary)
@@ -137,8 +138,8 @@ def _list_globals_items() -> list[dict[str, Any]]:
     try:
         for ea, name in idautils.Names():
             try:
-                fn = ida_funcs.get_func(ea)
-                if fn and int(fn.start_ea) == int(ea):
+                fstart = ida_shims.func_start(ea)
+                if fstart is not None and int(fstart) == int(ea):
                     continue
             except Exception:
                 pass
@@ -293,10 +294,10 @@ def _summarize_xrefs(address: str, items: list[dict[str, Any]], direction: str) 
         try:
             ref_int = int(ref_address, 16)
             if ida_funcs is not None and idaapi is not None:
-                fn = ida_funcs.get_func(ref_int)
-                if fn:
-                    fn_address = hex_addr(fn.start_ea)
-                    name = idaapi.get_func_name(fn.start_ea)
+                fstart = ida_shims.func_start(ref_int)
+                if fstart is not None:
+                    fn_address = hex_addr(fstart)
+                    name = idaapi.get_func_name(fstart)
                     key = fn_address
         except Exception:
             pass
@@ -550,7 +551,7 @@ def structs_resource() -> str:
 
 @resource(uri="ida://struct/{name}")
 @idaread
-def struct_resource(name: str) -> str:
+def struct_name_resource(name: str) -> str:
     from .api_types import get_struct_info
 
     result = get_struct_info.__wrapped__(name)
@@ -636,3 +637,60 @@ def memory_resource(addr: str, size: int = 16) -> str:
         bytes=first.get("bytes"),
         hex=first.get("hex"),
     )
+
+
+@resource(uri="ida://idb/segments")
+@idaread
+def idb_segments_resource() -> str:
+    """Compatibility alias for the IDB segment resource."""
+    return segments_resource.__wrapped__()
+
+
+@resource(uri="ida://idb/entrypoints")
+@idaread
+def idb_entrypoints_resource() -> str:
+    """Compatibility alias for the IDB entry-point resource."""
+    return entry_points_resource.__wrapped__()
+
+
+@resource(uri="ida://cursor")
+@idaread
+def cursor_resource() -> str:
+    """Return current cursor state."""
+    from .api_core import get_cursor
+    return _resource_detail("cursor", **get_cursor.__wrapped__())
+
+
+@resource(uri="ida://selection")
+@idaread
+def selection_resource() -> str:
+    """Return the current IDA selection range."""
+    try:
+        import ida_kernwin  # type: ignore
+        selected = ida_kernwin.read_range_selection(None)
+        if selected:
+            return _resource_detail("selection", start=hex_addr(selected[0]), end=hex_addr(selected[1]) if selected[1] else None)
+    except Exception:
+        pass
+    return _resource_detail("selection", selection=None)
+
+
+@resource(uri="ida://import/{name}")
+@idaread
+def import_name_resource(name: str) -> str:
+    """Return imports with an exact or case-insensitive matching name."""
+    items = [item for item in _list_import_items() if str(item.get("name", "")).lower() == name.lower()]
+    return _resource_detail("import", name=name, count=len(items), items=items)
+
+
+@resource(uri="ida://export/{name}")
+@idaread
+def export_name_resource(name: str) -> str:
+    """Return exports with an exact or case-insensitive matching name."""
+    items = [item for item in _list_export_items() if str(item.get("name", "")).lower() == name.lower()]
+    return _resource_detail("export", name=name, count=len(items), items=items)
+
+
+# Backward-compatible Python helper name. The resource URI remains registered
+# by struct_name_resource above.
+struct_resource = struct_name_resource

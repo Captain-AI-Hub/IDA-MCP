@@ -8,7 +8,7 @@ from .api_loader import ensure_api_modules_loaded
 from .config import get_server_name
 from .rpc import get_resources, get_tool_specs
 
-__version__ = "0.6.3"
+__version__ = "0.7.0"
 
 
 def create_mcp_server(
@@ -25,6 +25,7 @@ def create_mcp_server(
 
     mcp = FastMCP(
         name=name,
+        version=__version__,
         instructions="通过 MCP 工具访问 IDA 反汇编/分析数据。支持批量操作和 ida:// URI 资源访问。",
     )
 

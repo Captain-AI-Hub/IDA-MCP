@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import atexit
+import ipaddress
 import json
 import ntpath
 import os
@@ -190,14 +191,24 @@ def _repo_root() -> str:
     return os.path.dirname(_package_dir())
 
 
+def _gateway_bind_is_loopback() -> bool:
+    host = get_http_bind_host().strip()
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 def ensure_registry_server(startup_timeout: float = 3.0) -> bool:
     """Ensure the standalone single-port gateway is reachable."""
-    if not get_gateway_token():
+    if not _gateway_bind_is_loopback() and not get_gateway_token():
         _set_launch_status(
             "registry_server",
             requested=False,
             alive=False,
-            last_error="gateway_token is required in config.conf",
+            last_error="gateway_token is required when http_host is not loopback",
         )
         return False
 
@@ -560,15 +571,124 @@ def _kill_process(pid: int) -> bool:
         return False
 
 
+def _gateway_pid_path(port: Optional[int] = None) -> str:
+    """Return the per-port gateway PID file used across CLI processes."""
+    effective_port = get_gateway_internal_port() if port is None else port
+    return os.path.join(tempfile.gettempdir(), f"ida_mcp_gateway_{effective_port}.pid")
+
+
+def write_gateway_pid(pid: Optional[int] = None) -> str:
+    """Persist the gateway PID so a later CLI invocation can stop it."""
+    path = _gateway_pid_path()
+    with open(path, "w", encoding="ascii") as handle:
+        handle.write(str(os.getpid() if pid is None else pid))
+    return path
+
+
+def remove_gateway_pid(pid: Optional[int] = None) -> None:
+    """Remove this gateway's PID file without deleting a newer process record."""
+    path = _gateway_pid_path()
+    try:
+        with open(path, "r", encoding="ascii") as handle:
+            recorded = int(handle.read().strip())
+        expected = os.getpid() if pid is None else pid
+        if recorded == expected:
+            os.unlink(path)
+    except (OSError, ValueError):
+        pass
+
+
+def _read_gateway_pid() -> Optional[int]:
+    try:
+        with open(_gateway_pid_path(), "r", encoding="ascii") as handle:
+            pid = int(handle.read().strip())
+        return pid if pid > 0 else None
+    except (OSError, ValueError):
+        return None
+
+
+def _discover_gateway_pid() -> Optional[int]:
+    """Find a legacy gateway listener that predates the PID-file support."""
+    port = get_gateway_internal_port()
+    try:
+        if os.name == "nt":
+            completed = subprocess.run(
+                ["netstat", "-ano", "-p", "tcp"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            for line in completed.stdout.splitlines():
+                fields = line.split()
+                if len(fields) < 5 or fields[0].upper() != "TCP":
+                    continue
+                if fields[3].upper() != "LISTENING":
+                    continue
+                local = fields[1].rsplit(":", 1)
+                if len(local) != 2 or local[1] != str(port):
+                    continue
+                pid = int(fields[4])
+                process = subprocess.run(
+                    [
+                        "powershell",
+                        "-NoProfile",
+                        "-NonInteractive",
+                        "-Command",
+                        f"(Get-Process -Id {pid} -ErrorAction SilentlyContinue).Path",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                executable = os.path.basename(process.stdout.strip()).lower()
+                if executable.startswith("python"):
+                    # Only reclaim a listener that behaves like the old
+                    # token-protected IDA-MCP gateway. Do not kill arbitrary
+                    # Python services that happen to use the configured port.
+                    probe = _request_json(
+                        "GET", "/healthz", timeout=0.5, ensure_server=False
+                    )
+                    if isinstance(probe, dict) and probe.get("error") == "unauthorized":
+                        return pid
+            return None
+
+        completed = subprocess.run(
+            ["sh", "-c", f"lsof -nP -t -iTCP:{port} -sTCP:LISTEN 2>/dev/null | head -n 1"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        output = completed.stdout.strip()
+        if not output:
+            return None
+        pid = int(output)
+        command = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        ).stdout
+        if "ida_mcp" in command and "registry_server" in command:
+            return pid
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+    return None
+
+
 def kill_gateway() -> dict:
-    """Force-kill the gateway process by PID."""
-    pid = _launch_status.get("registry_server", {}).get("pid")
+    """Force-kill the gateway process by known or safely discovered PID."""
+    pid = (
+        _launch_status.get("registry_server", {}).get("pid")
+        or _read_gateway_pid()
+        or _discover_gateway_pid()
+    )
     if not pid:
-        return {"error": "Gateway PID not available (process not launched by this client)"}
+        return {"error": "Gateway PID not available or listener is not an IDA-MCP gateway"}
 
     killed = _kill_process(pid)
     if killed:
         _set_launch_status("registry_server", alive=False)
+        remove_gateway_pid(pid)
         # Wait briefly and verify the port is released
         time.sleep(0.2)
         return {

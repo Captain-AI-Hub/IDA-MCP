@@ -51,9 +51,18 @@ def gateway_status_payload() -> dict[str, Any]:
     }
 
 
-def ensure_gateway_running(startup_timeout: float | None = None) -> dict[str, Any]:
+def ensure_gateway_running(
+    startup_timeout: float | None = None, force: bool = False
+) -> dict[str, Any]:
     if startup_timeout is None:
         startup_timeout = float(get_request_timeout())
+    if force and not registry.get_registry_server_status().get("alive"):
+        # Explicitly reclaim a stale/legacy IDA-MCP listener before spawning.
+        if registry._gateway_internal_alive():
+            registry.shutdown_gateway(force=True, timeout=min(startup_timeout, 2.0))
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline and registry._gateway_internal_alive():
+                time.sleep(0.1)
     ok = registry.ensure_registry_server(startup_timeout=startup_timeout)
     proxy_ok = registry.ensure_gateway_proxy_running(startup_timeout=startup_timeout)
     payload = gateway_status_payload()

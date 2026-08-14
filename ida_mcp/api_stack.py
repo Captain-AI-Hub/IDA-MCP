@@ -12,6 +12,7 @@ from typing import Annotated, Optional, List, Dict, Any, Union
 from .rpc import tool
 from .sync import idaread, idawrite, wait_for_auto_analysis
 from .utils import parse_address, normalize_list_input, hex_addr, is_valid_c_identifier
+from . import ida_shims
 
 # IDA module imports
 try:
@@ -81,29 +82,30 @@ def _default_stack_type(size: int) -> str:
     return f"char[{size}]"
 
 
-def _get_frame_tinfo(f: Any) -> Any:
+def _get_frame_tinfo(func_ea: int) -> Any:
     """Load a function frame as IDA 9 tinfo_t."""
     if ida_typeinf is None or ida_frame is None:
         return None
 
     tif = ida_typeinf.tinfo_t()
     try:
-        if ida_frame.get_func_frame(tif, f):  # type: ignore[attr-defined]
+        if ida_shims.get_func_frame(tif, func_ea):
             return tif
     except Exception:
         pass
 
     try:
-        if getattr(f, "frame", None) and tif.get_type_by_tid(f.frame):
+        frame_id = ida_shims.get_frame_id(func_ea)
+        if frame_id and tif.get_type_by_tid(frame_id):
             return tif
     except Exception:
         pass
     return None
 
 
-def _frame_variables_from_func(f: Any) -> List[dict]:
+def _frame_variables_from_func(func_ea: int) -> List[dict]:
     """Return IDA 9 frame members from a function frame type."""
-    tif = _get_frame_tinfo(f)
+    tif = _get_frame_tinfo(func_ea)
     if tif is None:
         return []
 
@@ -131,21 +133,21 @@ def _frame_variables_from_func(f: Any) -> List[dict]:
     return variables
 
 
-def _frame_member_by_name(f: Any, name: str) -> Optional[dict]:
-    for member in _frame_variables_from_func(f):
+def _frame_member_by_name(func_ea: int, name: str) -> Optional[dict]:
+    for member in _frame_variables_from_func(func_ea):
         if member.get("name") == name:
             return member
     return None
 
 
-def _define_stack_member(f: Any, offset: int, name: str, tif: Any) -> tuple[bool, Optional[str]]:
+def _define_stack_member(func_ea: int, offset: int, name: str, tif: Any) -> tuple[bool, Optional[str]]:
     errors: list[str] = []
 
     if ida_frame is None:
         return False, "ida_frame unavailable"
 
     try:
-        if ida_frame.define_stkvar(f, name, offset, tif):  # type: ignore[attr-defined]
+        if ida_shims.define_stkvar(func_ea, name, offset, tif):
             return True, None
     except Exception as exc:
         errors.append(f"define_stkvar failed: {exc}")
@@ -153,7 +155,7 @@ def _define_stack_member(f: Any, offset: int, name: str, tif: Any) -> tuple[bool
         errors.append("define_stkvar returned False")
 
     try:
-        if ida_frame.add_frame_member(f, name, offset, tif):  # type: ignore[attr-defined]
+        if ida_shims.add_frame_member(func_ea, name, offset, tif):
             return True, None
     except Exception as exc:
         errors.append(f"add_frame_member failed: {exc}")
@@ -202,14 +204,16 @@ def _stack_frame_single(query: str) -> dict:
         return {"error": "invalid address", "query": query}
     
     try:
-        f = ida_funcs.get_func(ea)
+        bounds = ida_shims.func_bounds(ea)
     except Exception:
-        f = None
-    if not f:
+        bounds = None
+    if not bounds:
         return {"error": "function not found", "query": query}
-    
+
+    func_start = bounds[0]
+
     try:
-        fname = idaapi.get_func_name(f.start_ea)
+        fname = idaapi.get_func_name(func_start)
     except Exception:
         fname = "?"
     
@@ -217,13 +221,13 @@ def _stack_frame_single(query: str) -> dict:
     local_variables: List[dict] = []
     hexrays_error = None
     
-    frame_variables = _frame_variables_from_func(f)
-    
+    frame_variables = _frame_variables_from_func(func_start)
+
     # get Hex-Rays local variables (always attempt to retrieve all locals)
     try:
         if ida_hexrays.init_hexrays_plugin():  # type: ignore
             from .analysis_utils import decompile_silent as _decompile_silent
-            cfunc = _decompile_silent(f.start_ea)  # type: ignore
+            cfunc = _decompile_silent(func_start)  # type: ignore
             if cfunc and cfunc.lvars:  # type: ignore
                 for lv in cfunc.lvars:  # type: ignore
                     try:
@@ -267,14 +271,14 @@ def _stack_frame_single(query: str) -> dict:
             return {
                 "query": query,
                 "name": fname,
-                "start_ea": hex_addr(f.start_ea),
+                "start_ea": hex_addr(func_start),
                 "variables": [],
                 "error": hexrays_error,
             }
         return {
             "query": query,
             "name": fname,
-            "start_ea": hex_addr(f.start_ea),
+            "start_ea": hex_addr(func_start),
             "variables": [],
             "note": "no stack frame or local variables",
         }
@@ -284,7 +288,7 @@ def _stack_frame_single(query: str) -> dict:
     result: dict = {
         "query": query,
         "name": fname,
-        "start_ea": hex_addr(f.start_ea),
+        "start_ea": hex_addr(func_start),
     }
     
     if frame_variables:
@@ -358,17 +362,19 @@ def declare_stack(
             continue
         
         try:
-            f = ida_funcs.get_func(parsed["value"])
+            bounds = ida_shims.func_bounds(parsed["value"])
         except Exception:
-            f = None
-        if not f:
+            bounds = None
+        if not bounds:
             results.append({"error": "function not found", "item": item})
             continue
 
-        existing = _frame_member_by_name(f, name)
+        func_start = bounds[0]
+
+        existing = _frame_member_by_name(func_start, name)
         if existing:
             results.append({
-                "function_address": hex_addr(int(f.start_ea)),
+                "function_address": hex_addr(int(func_start)),
                 "offset": offset,
                 "name": name,
                 "changed": False,
@@ -381,7 +387,7 @@ def declare_stack(
         if parse_error:
             results.append(_error(
                 "parse type failed",
-                function_address=hex_addr(int(f.start_ea)),
+                function_address=hex_addr(int(func_start)),
                 offset=offset,
                 name=name,
                 declared_type=declared_type,
@@ -389,9 +395,9 @@ def declare_stack(
             ))
             continue
 
-        ok, error = _define_stack_member(f, offset, name, tif)
+        ok, error = _define_stack_member(func_start, offset, name, tif)
         result = {
-            "function_address": hex_addr(int(f.start_ea)),
+            "function_address": hex_addr(int(func_start)),
             "offset": offset,
             "name": name,
             "declared_type": declared_type,
@@ -435,21 +441,23 @@ def delete_stack(
             continue
         
         try:
-            f = ida_funcs.get_func(parsed["value"])
+            bounds = ida_shims.func_bounds(parsed["value"])
         except Exception:
-            f = None
-        if not f:
+            bounds = None
+        if not bounds:
             results.append({"error": "function not found", "item": item})
             continue
-        
+
+        func_start = bounds[0]
+
         if ida_frame is None:
             results.append({"error": "ida_frame unavailable", "item": item})
             continue
 
-        member = _frame_member_by_name(f, str(name))
+        member = _frame_member_by_name(func_start, str(name))
         if not member:
             results.append({
-                "function_address": hex_addr(int(f.start_ea)),
+                "function_address": hex_addr(int(func_start)),
                 "name": name,
                 "changed": False,
                 "deleted": False,
@@ -463,9 +471,9 @@ def delete_stack(
             size = 1
 
         try:
-            ok = ida_frame.delete_frame_members(f, offset, offset + size)  # type: ignore[attr-defined]
+            ok = ida_shims.delete_frame_members(func_start, offset, offset + size)
             results.append({
-                "function_address": hex_addr(int(f.start_ea)),
+                "function_address": hex_addr(int(func_start)),
                 "name": name,
                 "changed": bool(ok),
                 "deleted": bool(ok),

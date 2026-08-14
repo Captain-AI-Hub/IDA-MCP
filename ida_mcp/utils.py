@@ -148,6 +148,28 @@ def hex_addr(addr: Union[int, str]) -> str:
     return f"0x{addr:X}"
 
 
+def normalize_dict_list(
+    value: Any,
+    string_factory: Optional[Any] = None,
+) -> List[Dict[str, Any]]:
+    """Normalize a single mapping or list of mappings for batch APIs."""
+    if value is None:
+        return []
+    if isinstance(value, dict):
+        return [dict(value)]
+    if isinstance(value, list):
+        output: List[Dict[str, Any]] = []
+        for item in value:
+            if isinstance(item, dict):
+                output.append(dict(item))
+            elif string_factory is not None:
+                output.append(dict(string_factory(str(item))))
+        return output
+    if string_factory is not None:
+        return [dict(string_factory(str(value)))]
+    return []
+
+
 def normalize_list_input(input_value: Union[int, str, List[Any]]) -> List[str]:
     """Normalize bulk input.
 

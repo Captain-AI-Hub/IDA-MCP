@@ -18,5 +18,10 @@ def ensure_api_modules_loaded() -> None:
     from . import api_modify  # noqa: F401
     from . import api_python  # noqa: F401
     from . import api_resources  # noqa: F401
+    try:
+        from . import api_sigmaker  # noqa: F401
+    except (ImportError, AttributeError):
+        # The vendored signature engine requires a live IDA runtime.
+        pass
     from . import api_stack  # noqa: F401
     from . import api_types  # noqa: F401

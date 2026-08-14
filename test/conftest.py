@@ -91,8 +91,10 @@ _API_CATEGORIES = {
     "list_exports": "core",
     "list_segments": "core",
     "get_cursor": "core",
+    "survey_binary": "core",
     "close_ida": "lifecycle",
     "open_in_ida": "lifecycle",
+    "save_idb": "lifecycle",
     # MemoryAnalysis
     "decompile": "analysis",
     "disasm": "analysis",
@@ -105,6 +107,15 @@ _API_CATEGORIES = {
     "xrefs_to_field": "analysis",
     "find_bytes": "analysis",
     "get_basic_blocks": "analysis",
+    "find_regex": "analysis",
+    "search_text": "analysis",
+    "find_instructions": "analysis",
+    "callgraph": "analysis",
+    "trace_data_flow": "analysis",
+    "make_signature": "analysis",
+    "make_signature_for_function": "analysis",
+    "make_signature_for_range": "analysis",
+    "find_xref_signatures": "analysis",
     # Memory
     "get_bytes": "memory",
     "read_scalar": "memory",
@@ -116,6 +127,11 @@ _API_CATEGORIES = {
     "rename_global_variable": "modify",
     "patch_bytes": "modify",
     "apply_patch": "modify",
+    "add_bookmark": "modify",
+    "patch_asm": "modify",
+    "set_op_type": "modify",
+    "force_recompile": "modify",
+    "diff_before_after": "modify",
     "create_function": "modeling",
     "delete_function": "modeling",
     "make_code": "modeling",
@@ -131,6 +147,7 @@ _API_CATEGORIES = {
     "set_global_variable_type": "types",
     "list_structs": "types",
     "get_struct_info": "types",
+    "infer_types": "types",
     # Stack
     "stack_frame": "stack",
     "declare_stack": "stack",
@@ -150,6 +167,8 @@ _API_CATEGORIES = {
     "dbg_enable_bp": "debug",
     "dbg_read_mem": "debug",
     "dbg_write_mem": "debug",
+    "dbg_status": "debug",
+    "dbg_thread_regs": "debug",
 }
 
 # 这些工具只在 proxy 暴露，不应通过 gateway /call 转发到某个现有实例。

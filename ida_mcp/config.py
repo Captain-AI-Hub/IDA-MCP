@@ -13,7 +13,7 @@ Gateway HTTP config:
     - http_host: gateway bind address (default 127.0.0.1)
     - http_port: gateway listen port (default 11338)
     - http_path: MCP endpoint path (default /mcp)
-    - gateway_token: required shared bearer token; empty fails closed
+    - gateway_token: bearer token required only for non-loopback clients
 
 IDA instance config:
     - ida_default_port: starting port for IDA instance MCP (default 10000)
@@ -53,6 +53,10 @@ _DEFAULT_CONFIG = {
     "http_host": "127.0.0.1",
     "http_port": 11338,
     "http_path": "/mcp",
+    "mcp_protocol_version": "2026-07-28",
+    "mcp_legacy_protocol": True,
+    "mcp_json_response": True,
+    "mcp_sessionless": True,
     "gateway_token": None,
     # IDA instance config
     "ida_default_port": 10000,
@@ -80,6 +84,10 @@ _HCLI_SETTING_KEYS = (
     "http_host",
     "http_port",
     "http_path",
+    "mcp_protocol_version",
+    "mcp_legacy_protocol",
+    "mcp_json_response",
+    "mcp_sessionless",
     "request_timeout",
     "debug",
 )
@@ -468,6 +476,31 @@ def get_http_path() -> str:
     return str(config.get("http_path", "/mcp"))
 
 
+def get_mcp_protocol_version() -> str:
+    """Return the MCP protocol revision advertised by this gateway."""
+    config = load_config()
+    value = str(config.get("mcp_protocol_version", "2026-07-28") or "2026-07-28").strip()
+    return value or "2026-07-28"
+
+
+def is_mcp_sessionless_enabled() -> bool:
+    """Whether sessionless HTTP is enabled for legacy transport requests."""
+    config = load_config()
+    return _coerce_bool(config.get("mcp_sessionless", True), True)
+
+
+def is_mcp_legacy_protocol_enabled() -> bool:
+    """Whether pre-2026 initialize/session clients remain accepted."""
+    config = load_config()
+    return _coerce_bool(config.get("mcp_legacy_protocol", True), True)
+
+
+def is_mcp_json_response_enabled() -> bool:
+    """Whether HTTP requests prefer one JSON response over SSE framing."""
+    config = load_config()
+    return _coerce_bool(config.get("mcp_json_response", True), True)
+
+
 def get_http_url() -> str:
     """Get the full HTTP gateway URL for client access."""
     host = get_http_connect_host()
@@ -479,8 +512,8 @@ def get_http_url() -> str:
 def get_gateway_token() -> str | None:
     """Get the shared gateway bearer token.
 
-    The gateway refuses requests when this is unset.  Installers should write a
-    random non-empty token into config.conf.
+    Loopback requests do not require it. Installers should still write a random
+    token when the gateway may be reached through a non-loopback interface.
     """
     config = load_config()
     token = config.get("gateway_token")
@@ -493,18 +526,16 @@ def get_gateway_token() -> str | None:
 
 def get_mcp_client_config() -> Dict[str, Any]:
     """Return a copy/paste-ready MCP client configuration for the gateway."""
-    token = get_gateway_token() or ""
-    return {
-        "mcpServers": {
-            "ida-mcp": {
-                "url": get_http_url(),
-                "headers": {
-                    "Authorization": f"Bearer {token}",
-                    "X-IDA-MCP-Token": token,
-                },
-            }
+    token = get_gateway_token()
+    server: Dict[str, Any] = {"url": get_http_url()}
+    # Do not emit empty bearer headers: loopback is intentionally unauthenticated
+    # and clients may interpret a blank bearer value as a credential.
+    if token:
+        server["headers"] = {
+            "Authorization": f"Bearer {token}",
+            "X-IDA-MCP-Token": token,
         }
-    }
+    return {"mcpServers": {"ida-mcp": server}}
 
 
 def get_gateway_auth_headers() -> dict[str, str]:

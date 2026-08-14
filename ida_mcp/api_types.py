@@ -9,6 +9,7 @@ Provides tools:
     - set_global_variable_type set global variable type
     - list_structs         list structs
     - get_struct_info      get struct details
+    - infer_types          guess and apply types at addresses
 """
 from __future__ import annotations
 
@@ -19,6 +20,7 @@ from .rpc import tool
 from .sync import idaread, idawrite, wait_for_auto_analysis
 from .type_utils import iter_local_type_ordinals
 from .utils import parse_address, is_valid_c_identifier, hex_addr
+from . import ida_shims
 
 # IDA module imports
 try:
@@ -332,13 +334,13 @@ def set_function_prototype(
     proto_text = prototype.strip()
     
     try:
-        f = ida_funcs.get_func(parsed["value"])
+        fstart = ida_shims.func_start(parsed["value"])
     except Exception:
-        f = None
-    if not f:
+        fstart = None
+    if fstart is None:
         return {"error": "function not found"}
-    
-    start_ea = int(f.start_ea)
+
+    start_ea = int(fstart)
     
     # get old type
     old_decl = None
@@ -444,14 +446,14 @@ def set_local_variable_type(
     
     # locate function
     try:
-        f = ida_funcs.get_func(parsed["value"])
+        fstart = ida_shims.func_start(parsed["value"])
     except Exception:
-        f = None
-    if not f:
+        fstart = None
+    if fstart is None:
         return {"error": "function not found"}
-    
+
     from .analysis_utils import decompile_silent as _decompile_silent
-    cfunc = _decompile_silent(f.start_ea)
+    cfunc = _decompile_silent(fstart)
     if not cfunc:
         return {"error": "decompile returned None"}
     
@@ -512,13 +514,13 @@ def set_local_variable_type(
         pass
     
     try:
-        fname = idaapi.get_func_name(f.start_ea)
+        fname = idaapi.get_func_name(fstart)
     except Exception:
         fname = "?"
-    
+
     return {
         "function": fname,
-        "start_ea": hex_addr(f.start_ea),
+        "start_ea": hex_addr(fstart),
         "variable_name": variable_name,
         "old_type": old_type_str,
         "new_type": new_type_str,
@@ -554,8 +556,8 @@ def set_global_variable_type(
     
     # reject function starts
     try:
-        f = ida_funcs.get_func(ea)
-        if f and int(f.start_ea) == int(ea):
+        fstart = ida_shims.func_start(ea)
+        if fstart is not None and int(fstart) == int(ea):
             return {"error": "target is function start"}
     except Exception:
         pass
@@ -738,3 +740,78 @@ def get_struct_info(
         }
     except Exception as e:
         return {"error": str(e), "name": name}
+
+
+# ============================================================================
+# Type inference
+# ============================================================================
+
+from .utils import normalize_list_input
+
+
+def _guess_tinfo(ea: int):
+    """Ask IDA to guess the type at an address; returns (tinfo, error)."""
+    if ida_typeinf is None:
+        return None, "ida_typeinf unavailable"
+    # IDA 9 exposes guess_tinfo as guess_tinfo(out, ea); some builds return
+    # the tinfo directly from guess_tinfo(ea). Try both shapes.
+    tif = ida_typeinf.tinfo_t()
+    try:
+        if ida_typeinf.guess_tinfo(tif, ea):
+            return tif, None
+    except TypeError:
+        try:
+            guessed = ida_typeinf.guess_tinfo(ea)
+            if guessed:
+                return guessed, None
+        except Exception as e:
+            return None, str(e)
+    except Exception as e:
+        return None, str(e)
+    return None, "no type guessed"
+
+
+@tool
+@idawrite
+def infer_types(
+    addresses: Annotated[Union[int, str, List[str]], "Address(es) or symbol name(s) to guess and apply types for (comma-separated ok)"],
+) -> List[dict]:
+    """Guess the type at each address with IDA's type inference and apply it as a guessed type."""
+    results = []
+    for query in normalize_list_input(addresses):
+        parsed = parse_address(query)
+        if parsed["ok"] and parsed["value"] is not None:
+            ea = parsed["value"]
+        else:
+            try:
+                ea = int(idaapi.get_name_ea(idaapi.BADADDR, str(query)))
+            except Exception:
+                ea = idaapi.BADADDR
+            if ea == idaapi.BADADDR:
+                results.append({"error": "not found", "query": query})
+                continue
+
+        tif, error = _guess_tinfo(int(ea))
+        if error or tif is None:
+            results.append({"error": error or "no type guessed", "query": query, "address": hex_addr(int(ea))})
+            continue
+
+        try:
+            type_text = str(tif)
+        except Exception:
+            type_text = None
+
+        try:
+            applied = bool(ida_typeinf.apply_tinfo(int(ea), tif, ida_typeinf.TINFO_GUESSED))
+        except Exception as e:
+            results.append({"error": f"apply failed: {e}", "query": query, "address": hex_addr(int(ea)), "type": type_text})
+            continue
+
+        results.append({
+            "query": query,
+            "address": hex_addr(int(ea)),
+            "type": type_text,
+            "applied": applied,
+        })
+
+    return results

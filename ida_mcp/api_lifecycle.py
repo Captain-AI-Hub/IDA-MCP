@@ -1,4 +1,9 @@
-"""IDA lifecycle API - runtime control inside an IDA process."""
+"""IDA lifecycle API - runtime control inside an IDA process.
+
+Provides tools:
+    - close_ida   close the IDA instance
+    - save_idb    save the current database
+"""
 from __future__ import annotations
 
 import threading
@@ -64,3 +69,20 @@ def close_ida(
         }
     except Exception as e:
         return {"error": str(e)}
+
+
+@tool
+@idawrite
+def save_idb(
+    path: Annotated[str, "Target .i64/.idb path; empty keeps the current database path"] = "",
+) -> dict:
+    """Save the current IDA database to disk."""
+    if ida_loader is None:
+        return {"error": "IDA runtime unavailable (ida_loader)"}
+    target = str(path).strip() or None
+    try:
+        # ida_loader.save_database() returns None (void) on success.
+        ida_loader.save_database(target, 0)
+    except Exception as e:
+        return {"error": f"save failed: {e}", "path": target}
+    return {"saved": True, "path": target}

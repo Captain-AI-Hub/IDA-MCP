@@ -4,7 +4,7 @@ import threading
 import time
 import traceback
 
-from ida_mcp.config import get_server_name, is_unsafe_enabled
+from ida_mcp.config import get_server_name, is_mcp_json_response_enabled, is_mcp_sessionless_enabled, is_unsafe_enabled
 from ida_mcp.server_factory import create_mcp_server
 
 _server_thread: threading.Thread | None = None
@@ -164,7 +164,18 @@ def _start_instance_server_threads(host: str, port: int) -> None:
                 name=get_server_name(),
                 enable_unsafe=is_unsafe_enabled(),
             )
-            app = server.http_app(path="/mcp")  # type: ignore[attr-defined]
+            from starlette.middleware import Middleware
+
+            from ida_mcp.protocol_guard import LegacyProtocolGateMiddleware
+
+            app = server.http_app(
+                path="/mcp",
+                stateless_http=is_mcp_sessionless_enabled(),
+                json_response=is_mcp_json_response_enabled(),
+                session_idle_timeout=None,
+                # Reject handshake-era clients when mcp_legacy_protocol=false.
+                middleware=[Middleware(LegacyProtocolGateMiddleware)],
+            )  # type: ignore[attr-defined]
             import warnings as _w
 
             _w.filterwarnings("ignore", category=DeprecationWarning, module=r"websockets")

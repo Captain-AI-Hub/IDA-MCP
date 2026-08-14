@@ -140,6 +140,14 @@ def test_get_mcp_client_config_includes_url_and_token_headers():
     }
 
 
+def test_get_mcp_client_config_omits_empty_auth_headers():
+    with patch.object(config, "get_http_url", return_value="http://127.0.0.1:11338/mcp"):
+        with patch.object(config, "get_gateway_token", return_value=None):
+            value = config.get_mcp_client_config()
+
+    assert value == {"mcpServers": {"ida-mcp": {"url": "http://127.0.0.1:11338/mcp"}}}
+
+
 def test_initialize_runtime_settings_reports_generated_token_when_persistence_fails():
     with patch.object(
         config,

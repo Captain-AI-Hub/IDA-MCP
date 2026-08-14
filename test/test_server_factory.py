@@ -33,9 +33,10 @@ class _FakeProxyServer:
 
 
 class _FakeFastMCP:
-    def __init__(self, name: str, instructions: str) -> None:
+    def __init__(self, name: str, instructions: str, version: str | None = None) -> None:
         self.name = name
         self.instructions = instructions
+        self.version = version
         self.tools: list[str] = []
         self.resources: list[str] = []
 
@@ -139,18 +140,44 @@ def test_proxy_registers_consolidated_memory_and_type_tools(monkeypatch):
     ):
         assert tool_name in server.tool_names
 
+    assert "declare_type" not in server.tool_names
+
     for removed_name in (
         "get_u8",
         "get_u16",
         "get_u32",
         "get_u64",
         "create_array",
-        "declare_type",
         "get_function",
         "get_pseudocode_function",
         "get_pseudocode_lines",
     ):
         assert removed_name not in server.tool_names
+
+
+def test_registry_includes_restored_capability_tools():
+    """恢复的能力工具（原 compat 独有能力，现代化重构版）应完成注册。"""
+    ensure_api_modules_loaded()
+
+    specs = get_tool_specs()
+    for tool_name in (
+        "save_idb",
+        "survey_binary",
+        "find_regex",
+        "search_text",
+        "find_instructions",
+        "callgraph",
+        "trace_data_flow",
+        "add_bookmark",
+        "patch_asm",
+        "set_op_type",
+        "force_recompile",
+        "diff_before_after",
+        "infer_types",
+        "dbg_status",
+        "dbg_thread_regs",
+    ):
+        assert tool_name in specs
 
 
 def test_proxy_registration_matches_backend_registry(monkeypatch):
