@@ -299,7 +299,7 @@ def list_strings(
     cached = _get_strings_cache()
 
     items = [
-        {'ea': ea, 'length': length, 'type': stype, 'text': text}
+        {'ea': hex_addr(ea), 'length': length, 'type': stype, 'text': text}
         for ea, length, stype, text in cached
     ]
 
@@ -394,7 +394,7 @@ def get_entry_points() -> dict:
                     name = None
             out.append({
                 'ordinal': int(ordv),
-                'ea': int(ea),
+                'ea': hex_addr(ea),
                 'name': name,
             })
         except Exception:
@@ -412,7 +412,7 @@ def convert_number(
     text: Annotated[str, "Numeric text (decimal, 0x, 0b, trailing h)"],
     size: Annotated[int, "Bit width: 8, 16, 32, or 64"] = 64,
 ) -> dict:
-    """Convert number to different formats (hex, dec, bin, bytes)."""
+    """Convert number to hex/unsigned/signed representations."""
     allowed = {8, 16, 32, 64}
     if size not in allowed:
         return {"error": f"invalid size (must be one of {sorted(allowed)})"}
@@ -449,22 +449,13 @@ def convert_number(
     
     hex_width = size // 4
     hex_repr = f"0x{value:0{hex_width}X}"
-    bin_repr = f"0b{value:0{size}b}"
-    num_bytes = size // 8
-    bytes_le = [f"{(value >> (8 * i)) & 0xFF:02X}" for i in range(num_bytes)]
-    bytes_be = list(reversed(bytes_le))
     
     return {
         "input": original,
         "size": size,
-        "value": value,
         "hex": hex_repr,
-        "dec": str(unsigned_val),
         "unsigned": unsigned_val,
         "signed": signed_val,
-        "bin": bin_repr,
-        "bytes_le": bytes_le,
-        "bytes_be": bytes_be,
     }
 
 
@@ -709,19 +700,17 @@ def get_cursor() -> dict:
     result: dict = {}
     
     # get current cursor address
+    ea: Optional[int] = None
     try:
         ea = ida_kernwin.get_screen_ea()
         result["ea"] = hex_addr(ea)
-        result["ea_int"] = ea
     except Exception:
         result["ea"] = None
-        result["ea_int"] = None
     
     # get current function
-    ea_int = result.get("ea_int")
-    if ea_int is not None:
+    if ea is not None:
         try:
-            bounds = ida_shims.func_bounds(ea_int)
+            bounds = ida_shims.func_bounds(ea)
             if bounds:
                 result["function"] = {
                     "name": idaapi.get_func_name(bounds[0]),

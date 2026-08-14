@@ -60,10 +60,8 @@ def get_bytes(
             hex_str = ' '.join(f'{b:02X}' for b in byte_list)
             
             results.append({
-                "query": query,
                 "address": hex_addr(address),
                 "size": len(byte_list),
-                "bytes": byte_list,
                 "hex": hex_str,
             })
         except Exception as e:
@@ -120,12 +118,8 @@ def _read_scalar(addr: Union[int, str], width: int, signed: bool = False) -> Lis
             value = int.from_bytes(data, byteorder=endian, signed=signed)
             
             results.append({
-                "query": query,
                 "address": hex_addr(address),
-                "width": width,
-                "signed": bool(signed),
                 "value": value,
-                "unsigned": unsigned_value,
                 "hex": f"0x{unsigned_value:0{width*2}X}",
             })
         except Exception as e:
@@ -184,7 +178,6 @@ def get_string(
                     text = data.hex()
             
             results.append({
-                "query": query,
                 "address": hex_addr(address),
                 "length": len(data),
                 "text": text,

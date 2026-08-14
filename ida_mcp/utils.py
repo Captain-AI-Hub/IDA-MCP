@@ -201,7 +201,7 @@ def paginate(
         max_count: maximum allowed count
 
     Returns:
-        Page: { total, offset, count, items }
+        Page: { total, items }
     """
     total = len(items)
 
@@ -214,8 +214,6 @@ def paginate(
 
     return {
         "total": total,
-        "offset": offset,
-        "count": len(slice_items),
         "items": slice_items,
     }
 

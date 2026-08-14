@@ -28,11 +28,12 @@ class TestGetBytes:
             "size": 16
         })
 
-        # API returns list format [{"addr": ..., "hex": ..., "bytes": ...}]
+        # API returns list format [{"address": ..., "size": ..., "hex": ...}]
         assert isinstance(result, list)
         assert len(result) >= 1
         if "error" not in result[0]:
-            assert "bytes" in result[0] or "hex" in result[0]
+            assert "hex" in result[0]
+            assert "bytes" not in result[0]
 
     def test_get_bytes_different_sizes(self, tool_caller, first_function_address):
         """Test different sizes."""
@@ -83,8 +84,7 @@ class TestReadScalar:
         assert len(result) >= 1
         if "error" not in result[0]:
             assert "value" in result[0]
-            assert result[0]["width"] == 4
-            assert result[0]["signed"] is False
+            assert "hex" in result[0]
             assert 0 <= result[0]["value"] <= 0xFFFFFFFF
 
     def test_read_scalar_u64(self, tool_caller, first_function_address):
@@ -95,7 +95,7 @@ class TestReadScalar:
         assert len(result) >= 1
         if "error" not in result[0]:
             assert "value" in result[0]
-            assert result[0]["width"] == 8
+            assert "hex" in result[0]
 
     def test_read_scalar_u8(self, tool_caller, first_function_address):
         """Test reading 1-byte unsigned integer."""
@@ -105,7 +105,6 @@ class TestReadScalar:
         assert len(result) >= 1
         if "error" not in result[0]:
             assert "value" in result[0]
-            assert result[0]["width"] == 1
             assert 0 <= result[0]["value"] <= 255
 
     def test_read_scalar_u16(self, tool_caller, first_function_address):
@@ -116,7 +115,6 @@ class TestReadScalar:
         assert len(result) >= 1
         if "error" not in result[0]:
             assert "value" in result[0]
-            assert result[0]["width"] == 2
             assert 0 <= result[0]["value"] <= 0xFFFF
 
     def test_read_scalar_rejects_invalid_width(self, tool_caller, first_function_address):

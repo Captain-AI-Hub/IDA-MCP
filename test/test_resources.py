@@ -280,7 +280,6 @@ class TestFunctionResources:
         _assert_detail_resource(data, "function_stack")
         assert isinstance(data["items"], list)
         assert data["method"] == "ida_frame"
-        assert data["frame_variables"] == data["items"]
         assert isinstance(data.get("local_variables", []), list)
         names = {item["name"] for item in data["items"]}
         assert set(complex_baseline["stack_frame"]["ida_mcp_stack_heavy_transform"]["required_variables"]).issubset(names)
@@ -391,7 +390,6 @@ class TestXrefAndMemoryResources:
             pytest.skip(f"Cannot read memory: {result['error']}")
         data = result["data"]
         _assert_detail_resource(data, "memory")
-        assert "bytes" in data
         assert "hex" in data
         assert data["hex"] == complex_baseline["globals"]["ida_mcp_patch_bytes"]["initial_hex"]
 

@@ -223,7 +223,7 @@ class TestPatchBytes:
         """Test patching and restoring bytes."""
         addr = complex_baseline["modify"]["safe_patch_address"]
 
-        # 1. Read original bytes
+        # 1. Read original bytes (hex string, space-separated)
         read_result = tool_caller("get_bytes", {
             "addr": addr,
             "size": 4
@@ -232,12 +232,12 @@ class TestPatchBytes:
         if not isinstance(read_result, list) or not read_result:
             pytest.skip("Cannot read bytes")
 
-        original_bytes = read_result[0].get("bytes", [])
-        if not original_bytes:
+        original_hex = read_result[0].get("hex", "")
+        if not original_hex:
             pytest.skip("No bytes read")
 
         # 2. Patch (NOP: 0x90)
-        nop_bytes = [0x90] * len(original_bytes)
+        nop_bytes = [0x90] * len(original_hex.split())
         patch_result = tool_caller("patch_bytes", {
             "items": [{"address": addr, "bytes": nop_bytes}]
         })
@@ -247,7 +247,7 @@ class TestPatchBytes:
 
         # 3. Restore original bytes
         restore_result = tool_caller("patch_bytes", {
-            "items": [{"address": addr, "bytes": original_bytes}]
+            "items": [{"address": addr, "bytes": original_hex}]
         })
 
         assert isinstance(restore_result, list)
@@ -265,7 +265,7 @@ class TestPatchBytes:
         if not isinstance(read_result, list) or not read_result:
             pytest.skip("Cannot read bytes")
 
-        original = read_result[0].get("bytes", [])
+        original = read_result[0].get("hex", "")
 
         # Patch using hex string format
         result = tool_caller("patch_bytes", {

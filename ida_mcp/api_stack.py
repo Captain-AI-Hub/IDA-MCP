@@ -293,13 +293,11 @@ def _stack_frame_single(query: str) -> dict:
     
     if frame_variables:
         result["variables"] = frame_variables
-        result["frame_variables"] = frame_variables
         result["method"] = "ida_frame"
         if local_variables:
             result["local_variables"] = local_variables
     else:
         result["variables"] = local_variables
-        result["local_variables"] = local_variables
         result["method"] = "hexrays"
     
     return result

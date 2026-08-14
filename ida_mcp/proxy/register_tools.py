@@ -13,7 +13,7 @@ except ImportError:  # pragma: no cover
 
 from ..config import is_unsafe_enabled
 from ..api_loader import ensure_api_modules_loaded
-from ..rpc import ToolSpec, get_tool_specs
+from ..rpc import ToolSpec, get_tool_specs, text_result_tool
 from ._state import forward
 from . import lifecycle
 
@@ -108,7 +108,7 @@ def _register_forwarded_backend_tools(server: Any, unsafe_enabled: bool) -> None
             continue
 
         wrapper = _build_forward_wrapper(spec)
-        server.tool(description=spec.description)(wrapper)
+        server.tool(description=spec.description)(text_result_tool(wrapper))
 
 
 def register_tools(server: Any) -> None:
@@ -116,9 +116,6 @@ def register_tools(server: Any) -> None:
     unsafe_enabled = is_unsafe_enabled()
     _register_forwarded_backend_tools(server, unsafe_enabled)
 
-    @server.tool(
-        description="Launch IDA Pro with the specified file. Automatically attempts to load IDA-MCP plugin."
-    )
     def open_in_ida(
         file_path: Annotated[
             str, Field(description="Path to the file to open (executable or IDB)")
@@ -129,9 +126,10 @@ def register_tools(server: Any) -> None:
     ) -> dict:
         return lifecycle.open_in_ida(file_path, extra_args=extra_args)
 
-    @server.tool(
-        description="Close the target IDA instance. Warning: This terminates the process."
-    )
+    server.tool(
+        description="Launch IDA Pro with the specified file. Automatically attempts to load IDA-MCP plugin."
+    )(text_result_tool(open_in_ida))
+
     def close_ida(
         save: Annotated[
             bool, Field(description="Whether to save IDB file before closing")
@@ -141,9 +139,10 @@ def register_tools(server: Any) -> None:
     ) -> dict:
         return lifecycle.close_ida(save=save, port=port, timeout=timeout)
 
-    @server.tool(
-        description="Request shutdown of the standalone gateway. Refuses while instances are registered unless force=true."
-    )
+    server.tool(
+        description="Close the target IDA instance. Warning: This terminates the process."
+    )(text_result_tool(close_ida))
+
     def shutdown_gateway(
         force: Annotated[
             bool,
@@ -152,3 +151,7 @@ def register_tools(server: Any) -> None:
         timeout: _TIMEOUT_ANNOTATION = None,
     ) -> dict:
         return lifecycle.shutdown_gateway(force=force, timeout=timeout)
+
+    server.tool(
+        description="Request shutdown of the standalone gateway. Refuses while instances are registered unless force=true."
+    )(text_result_tool(shutdown_gateway))

@@ -412,9 +412,10 @@ async def _call_handler(request: Request) -> JSONResponse:
                     if text:
                         try:
                             data = json.loads(text)
-                            break
                         except (json.JSONDecodeError, TypeError):
-                            continue
+                            # Plain-text tool result (e.g. decompile pseudocode)
+                            data = text
+                        break
             if data is None and hasattr(resp, "data") and resp.data is not None:
 
                 def norm(x: Any) -> Any:

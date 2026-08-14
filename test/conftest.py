@@ -335,6 +335,7 @@ def call_tool_gateway(tool_name: str, params: dict, port: Optional[int] = None) 
 
                 # 提取返回数据
                 data = None
+                raw_text = None
                 if hasattr(resp, "content") and resp.content:
                     for item in resp.content:
                         text = getattr(item, "text", None)
@@ -343,10 +344,15 @@ def call_tool_gateway(tool_name: str, params: dict, port: Optional[int] = None) 
                                 data = json.loads(text)
                                 break
                             except (json.JSONDecodeError, TypeError):
+                                if raw_text is None:
+                                    raw_text = text
                                 continue
 
                 if data is None and hasattr(resp, "data") and resp.data is not None:
                     data = resp.data
+                if data is None:
+                    # 纯文本工具结果（如 decompile 伪代码）
+                    data = raw_text
 
                 return data
 

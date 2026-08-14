@@ -32,19 +32,17 @@ class TestDecompile:
         """Test decompilation by address."""
         result = tool_caller("decompile", {"addr": hex(first_function_address)})
 
-        assert isinstance(result, list)
-        assert len(result) == 1
-        assert "error" not in result[0]
-        assert result[0].get("decompiled")
+        assert isinstance(result, str)
+        assert "// error" not in result
+        assert "{" in result  # has a function body
 
     def test_decompile_by_name(self, tool_caller, first_function_name):
         """Test decompilation by name."""
         result = tool_caller("decompile", {"addr": first_function_name})
 
-        assert isinstance(result, list)
-        assert len(result) == 1
-        assert "error" not in result[0]
-        assert result[0].get("decompiled")
+        assert isinstance(result, str)
+        assert "// error" not in result
+        assert first_function_name in result
 
     def test_decompile_batch(self, tool_caller, complex_baseline):
         """Test batch decompilation (comma-separated)."""
@@ -56,28 +54,25 @@ class TestDecompile:
         addr_list = ",".join(complex_baseline["functions"][name]["start_ea"] for name in names)
         result = tool_caller("decompile", {"addr": addr_list})
 
-        assert isinstance(result, list)
-        assert len(result) == 3
-        assert all("error" not in item for item in result)
-        assert all(item.get("decompiled") for item in result)
+        assert isinstance(result, str)
+        assert "// error" not in result
+        for name in names:
+            assert f"// {name} " in result
 
     def test_decompile_invalid_address(self, tool_caller):
         """Test decompilation with invalid address."""
         result = tool_caller("decompile", {"addr": "0xDEADBEEF"})
 
-        assert isinstance(result, list)
-        assert len(result) == 1
-        assert "error" in result[0]
+        assert isinstance(result, str)
+        assert "// error" in result
 
     def test_decompile_main(self, tool_caller, main_function_address):
         """Test decompiling the main function."""
         result = tool_caller("decompile", {"addr": hex(main_function_address)})
 
-        assert isinstance(result, list)
-        assert len(result) == 1
-        assert "error" not in result[0]
-        code = result[0]["decompiled"]
-        assert len(code) > 0
+        assert isinstance(result, str)
+        assert "// error" not in result
+        assert len(result) > 0
 
 
 class TestDisasm:
@@ -92,6 +87,11 @@ class TestDisasm:
         if "error" not in result[0]:
             assert "instructions" in result[0]
             assert len(result[0]["instructions"]) > 0
+            inst = result[0]["instructions"][0]
+            # addresses are hex strings and text has no IDA color tags
+            assert isinstance(inst["ea"], str) and inst["ea"].startswith("0x")
+            assert "\x01" not in inst["text"] and "\x02" not in inst["text"]
+            assert "bytes" not in inst
 
     def test_disasm_by_name(self, tool_caller, first_function_name):
         """Test disassembly by name."""

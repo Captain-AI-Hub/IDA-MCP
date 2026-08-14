@@ -158,7 +158,7 @@ gateway/control 面的包装错误常见格式：
 
 以下工具在 Gateway MCP proxy 上也可用，但会额外接受 `port?` 与 `timeout?`。
 
-如果 `enable_unsafe=false`，则 `py_eval`、`patch_bytes`、`apply_patch`、`patch_asm`、`diff_before_after` 与全部 `dbg_*` 工具不会注册。
+如果 `enable_unsafe=false`，则 `py_eval`、`py_exec_file`、`patch_bytes`、`apply_patch`、`patch_asm`、`diff_before_after` 与全部 `dbg_*` 工具不会注册。
 
 ### 4.1 Core Tools
 
@@ -172,41 +172,41 @@ gateway/control 面的包装错误常见格式：
 | `list_strings` | `offset?: int`, `count?: int`, `pattern?: str`, `regex?: bool` | `{"pattern":"^http","regex":true}` | 分页结果；默认对子串做大小写不敏感匹配；`regex=true` 时将 `pattern` 作为正则；`items` 为 `[{ea, length, type, text}]` |
 | `list_local_types` | none | `{}` | `{total, items:[{ordinal, name, decl}]}` |
 | `get_entry_points` | none | `{}` | `{total, items:[{ordinal, ea, name}]}` |
-| `convert_number` | `text: str`, `size?: int` | `{"text":"401000h","size":64}` | `{input, size, value, hex, dec, unsigned, signed, bin, bytes_le, bytes_be}` |
+| `convert_number` | `text: str`, `size?: int` | `{"text":"401000h","size":64}` | `{input, size, hex, unsigned, signed}` |
 | `list_imports` | `offset?: int`, `count?: int`, `pattern?: str` | `{"pattern":"kernel32"}` | 分页结果；`items` 为 `[{ea, name, ordinal, module}]` |
 | `list_exports` | `offset?: int`, `count?: int`, `pattern?: str` | `{"count":50}` | 分页结果；`items` 为 `[{ea, name, ordinal}]` |
 | `list_segments` | none | `{}` | `{total, items:[{name, start_ea, end_ea, size, perm, class, bitness}]}` |
-| `get_cursor` | none | `{}` | `{ea, ea_int, function?, selection?}` |
+| `get_cursor` | none | `{}` | `{ea, function?, selection?}` |
 | `survey_binary` | none | `{}` | `{metadata, counts:{functions, strings, imports, segments, entry_points}, segments, entry_points}` |
 
 ### 4.2 Analysis Tools
 
 | Tool | Parameters | Request Example | Expected Response |
 | --- | --- | --- | --- |
-| `decompile` | `addr: int | str` | `{"addr":"0x401000,main"}` | `[{query, name, start_ea, end_ea, decompiled, error}]` |
-| `disasm` | `addr: int | str` | `{"addr":"0x401000"}` | `[{query, name, start_ea, end_ea, instructions, error}]`；`instructions` 为 `[{ea, bytes, text, comment}]` |
-| `linear_disasm` | `start_address: int | str`, `count?: int` | `{"start_address":"0x401000","count":16}` | `{start_address, count, instructions, truncated?}`；`instructions` 为 `[{ea, bytes, text, is_code, len}]` |
-| `get_callers` | `addr: int | str` | `{"addr":"main"}` | `{query, function, start_ea, end_ea, total, items}`；`items` 为 `[{address, name, call_count, call_sites}]` |
-| `get_callees` | `addr: int | str` | `{"addr":"main"}` | `{query, function, start_ea, end_ea, total, items}`；`items` 为 `[{address, name, call_count, call_sites}]` |
-| `get_function_signature` | `addr: int | str` | `{"addr":"0x401000"}` | `{query, function, start_ea, end_ea, signature, source, inferred}` |
-| `xrefs_to` | `addr: int | str` | `{"addr":"0x401000,0x402000"}` | `[{query, address, total, xrefs, error}]`；`xrefs` 为 `[{frm, type, iscode}]` |
-| `xrefs_from` | `addr: int | str` | `{"addr":"0x401000"}` | `[{query, address, total, xrefs, error}]`；`xrefs` 为 `[{to, type, iscode}]` |
-| `xrefs_to_field` | `struct_name: str`, `field_name: str` | `{"struct_name":"MY_STRUCT","field_name":"vtable"}` | `{struct, field, offset, matches, truncated?, note?}`；`matches` 为 `[{ea, line}]` |
+| `decompile` | `addr: int | str` | `{"addr":"0x401000,main"}` | 纯文本 C 伪代码；批量时每个函数以 `// name 0xstart-0xend` 头行分隔，单项失败输出 `// error: ...` 行 |
+| `disasm` | `addr: int | str` | `{"addr":"0x401000"}` | `[{name, start_ea, end_ea, instructions, error}]`；`instructions` 为 `[{ea, text, comment?}]`（`ea` 为 `0x` 十六进制字符串，`text` 已去除颜色标签） |
+| `linear_disasm` | `start_address: int | str`, `count?: int` | `{"start_address":"0x401000","count":16}` | `{start_address, instructions, truncated?}`；`instructions` 为 `[{ea, text}]` |
+| `get_callers` | `addr: int | str` | `{"addr":"main"}` | `{function, start_ea, end_ea, total, items}`；`items` 为 `[{address, name, call_count, call_sites}]` |
+| `get_callees` | `addr: int | str` | `{"addr":"main"}` | `{function, start_ea, end_ea, total, items}`；`items` 为 `[{address, name, call_count, call_sites}]` |
+| `get_function_signature` | `addr: int | str` | `{"addr":"0x401000"}` | `{function, start_ea, end_ea, signature, source}` |
+| `xrefs_to` | `addr: int | str` | `{"addr":"0x401000,0x402000"}` | `[{address, total, xrefs, error}]`；`xrefs` 为 `[{frm, type, iscode}]` |
+| `xrefs_from` | `addr: int | str` | `{"addr":"0x401000"}` | `[{address, total, xrefs, error}]`；`xrefs` 为 `[{to, type, iscode}]` |
+| `xrefs_to_field` | `struct_name: str`, `field_name: str`, `limit?: int` | `{"struct_name":"MY_STRUCT","field_name":"vtable"}` | `{struct, field, offset, matches, truncated?, note?}`；`matches` 为 `[{ea, line}]`，默认最多 50 条（上限 500） |
 | `find_bytes` | `pattern: str`, `start?: str`, `end?: str`, `limit?: int` | `{"pattern":"48 8B ?? ?? 48 89","limit":20}` | `{pattern, ida_pattern, total, matches, truncated?}`；`matches` 为 `[{ea, bytes, function}]` |
-| `get_basic_blocks` | `addr: int | str` | `{"addr":"main"}` | `{query, function, start_ea, end_ea, total, blocks}`；`blocks` 为 `[{start_ea, end_ea, size, predecessors, successors, type?}]` |
-| `find_regex` | `pattern: str`, `limit?: int`, `offset?: int` | `{"pattern":"^sub_40"}` | `{pattern, count, items:[{ea, name}], truncated?}` |
-| `search_text` | `query: str`, `regex?: bool`, `limit?: int` | `{"query":"CreateFile"}` | `{query, regex, count, items:[{ea, text, comment, function}], truncated?}` |
-| `find_instructions` | `mnemonic?: str`, `pattern?: str`, `limit?: int` | `{"mnemonic":"call","pattern":"recv"}` | `{mnemonic, pattern, count, items:[{ea, mnemonic, text, function}], truncated?}` |
-| `callgraph` | `roots: int | str | list`, `max_depth?: int`, `max_nodes?: int` | `{"roots":"main","max_depth":3}` | `{roots, total_nodes, total_edges, nodes:[{ea, name, depth}], edges:[{caller, callee}], truncated?}` |
-| `trace_data_flow` | `address: int | str`, `direction?: str`, `max_depth?: int`, `max_nodes?: int` | `{"address":"g_state","direction":"both"}` | `{query, start, direction, nodes:[{ea, name, depth}], edges:[{frm, to, type}], truncated?}` |
+| `get_basic_blocks` | `addr: int | str` | `{"addr":"main"}` | `{function, start_ea, end_ea, total, blocks}`；`blocks` 为 `[{start_ea, end_ea, size, predecessors, successors, type?}]` |
+| `find_regex` | `pattern: str`, `limit?: int`, `offset?: int` | `{"pattern":"^sub_40"}` | `{count, items:[{ea, name}], truncated?}` |
+| `search_text` | `query: str`, `regex?: bool`, `limit?: int` | `{"query":"CreateFile"}` | `{count, items:[{ea, text, comment, function}], truncated?}` |
+| `find_instructions` | `mnemonic?: str`, `pattern?: str`, `limit?: int` | `{"mnemonic":"call","pattern":"recv"}` | `{count, items:[{ea, mnemonic, text, function}], truncated?}` |
+| `callgraph` | `roots: int | str | list`, `max_depth?: int`, `max_nodes?: int` | `{"roots":"main","max_depth":3}` | `{roots, nodes:[{ea, name, depth}], edges:[{caller, callee}], truncated?}` |
+| `trace_data_flow` | `address: int | str`, `direction?: str`, `max_depth?: int`, `max_nodes?: int` | `{"address":"g_state","direction":"both"}` | `{start, nodes:[{ea, name, depth}], edges:[{frm, to, type}], truncated?}` |
 
 ### 4.3 Memory Tools
 
 | Tool | Parameters | Request Example | Expected Response |
 | --- | --- | --- | --- |
-| `get_bytes` | `addr: int | str`, `size?: int` | `{"addr":"0x401000","size":16}` | `[{query, address, size, bytes, hex}]` 或每项 `{error, query, address?}` |
-| `read_scalar` | `addr: int | str`, `width?: int`, `signed?: bool` | `{"addr":"0x401000","width":4,"signed":false}` | `[{query, address, width, signed, value, unsigned, hex}]` |
-| `get_string` | `addr: int | str`, `max_len?: int` | `{"addr":"0x404000","max_len":128}` | `[{query, address, length, text}]` |
+| `get_bytes` | `addr: int | str`, `size?: int` | `{"addr":"0x401000","size":16}` | `[{address, size, hex}]` 或每项 `{error, query, address?}` |
+| `read_scalar` | `addr: int | str`, `width?: int`, `signed?: bool` | `{"addr":"0x401000","width":4,"signed":false}` | `[{address, value, hex}]` |
+| `get_string` | `addr: int | str`, `max_len?: int` | `{"addr":"0x404000","max_len":128}` | `[{address, length, text}]` |
 
 ### 4.4 Modeling Tools
 
@@ -244,18 +244,18 @@ gateway/control 面的包装错误常见格式：
 | `rename_local_variable` | `function_address: int | str`, `old_name: str`, `new_name: str` | `{"function_address":"0x401000","old_name":"v1","new_name":"ctx"}` | `{function, start_ea, old_name, new_name, changed}` 或 `{error}` |
 | `rename_global_variable` | `old_name: str`, `new_name: str` | `{"old_name":"dword_404000","new_name":"g_state"}` | `{ea, old_name, new_name, changed, note?}` 或 `{error}` |
 | `patch_bytes` | `items: [{address, bytes}]` | `{"items":[{"address":"0x401000","bytes":"90 90 90"}]}` | `[{address, size, patched, old_bytes, new_bytes, error}]` |
-| `apply_patch` | `output_path?: str`, `overwrite?: bool` | `{"output_path":"a.patched.exe","overwrite":false}` | `{input_file, output_file, input_size, applied, skipped, patches, skipped_patches, truncated}` 或 `{error}` |
-| `add_bookmark` | `address: int | str`, `description?: str` | `{"address":"0x401000","description":"entry"}` | `{address, slot, description, added}` 或 `{error}` |
-| `patch_asm` (unsafe) | `items: [{address, asm}]` | `{"items":[{"address":"0x401000","asm":"nop"}]}` | `[{address, asm, bytes, size, patched}]` 或每项 `{error}` |
+| `apply_patch` | `output_path?: str`, `overwrite?: bool` | `{"output_path":"a.patched.exe","overwrite":false}` | `{input_file, output_file, input_size, applied, skipped}` 或 `{error}` |
+| `add_bookmark` | `address: int | str`, `description?: str` | `{"address":"0x401000","description":"entry"}` | `{address, slot}` 或 `{error}` |
+| `patch_asm` (unsafe) | `items: [{address, asm}]` | `{"items":[{"address":"0x401000","asm":"nop"}]}` | `[{address, bytes, size}]` 或每项 `{error}` |
 | `set_op_type` | `items: [{address, type, operand?}]` | `{"items":[{"address":"0x401010","type":"char"}]}` | `[{address, operand, type, applied}]`；type 支持 hex/dec/oct/bin/char/stkvar |
 | `force_recompile` | `addresses?: int | str | list` | `{"addresses":"main"}` | `{cleared:"all"}` 或 `{cleared:"selected", results:[{address, marked_dirty}]}` |
-| `diff_before_after` (unsafe) | `address: int | str`, `action: str`, `action_args?: obj` | `{"address":"main","action":"rename_function","action_args":{"address":"main","new_name":"entry"}}` | `{query, function, action, action_result, changed, diff, truncated?}` 或 `{error}` |
+| `diff_before_after` (unsafe) | `address: int | str`, `action: str`, `action_args?: obj` | `{"address":"main","action":"rename_function","action_args":{"address":"main","new_name":"entry"}}` | `{function, action, action_result, changed, diff, truncated?}` 或 `{error}` |
 
 ### 4.6 Stack Tools
 
 | Tool | Parameters | Request Example | Expected Response |
 | --- | --- | --- | --- |
-| `stack_frame` | `addr: int | str` | `{"addr":"main"}` | `[{query, name, start_ea, method?, variables, frame_variables?, local_variables?, error?, note?}]` |
+| `stack_frame` | `addr: int | str` | `{"addr":"main"}` | `[{query, name, start_ea, method?, variables, local_variables?, error?, note?}]` |
 | `declare_stack` | `items: [{function_address, offset, name, type?, size?}]` | `{"items":[{"function_address":"0x401000","offset":-0x20,"name":"buf","type":"char[32]","size":32}]}` | `[{function_address, offset, name, declared_type?, size?, changed, error?, note?}]` |
 | `delete_stack` | `items: [{function_address, name}]` | `{"items":[{"function_address":"0x401000","name":"buf"}]}` | `[{function_address, name, changed, deleted, error}]` |
 
@@ -271,7 +271,7 @@ gateway/control 面的包装错误常见格式：
 | `set_global_variable_type` | `variable_name: str`, `new_type: str` | `{"variable_name":"g_state","new_type":"int"}` | `{ea, variable_name, old_type, new_type, applied}` 或 `{error}` |
 | `list_structs` | `pattern?: str` | `{"pattern":"web*"}` | `{total, items:[{ordinal, name, kind, size, members}]}` |
 | `get_struct_info` | `name: str` | `{"name":"MY_S"}` | `{name, kind, size, members, member_count}` 或 `{error}` |
-| `infer_types` | `addresses: int | str | list` | `{"addresses":"0x404000,g_state"}` | `[{query, address, type, applied}]` 或每项 `{error}` |
+| `infer_types` | `addresses: int | str | list` | `{"addresses":"0x404000,g_state"}` | `[{address, type, applied}]` 或每项 `{error}` |
 
 ### 4.8 Python Tool
 
@@ -289,27 +289,27 @@ gateway/control 面的包装错误常见格式：
 
 | Tool | Parameters | Request Example | Expected Response |
 | --- | --- | --- | --- |
-| `dbg_regs` | none | `{}` | `{ok, registers, notes?, note?}`；`registers` 为 `[{name, value, int?}]` |
-| `dbg_callstack` | none | `{}` | `{ok, frames, note?}`；`frames` 为 `[{index, ea, func}]` |
-| `dbg_list_bps` | none | `{}` | `{ok, total, breakpoints}`；`breakpoints` 为 `[{ea, enabled?, size?, type?}]` |
-| `dbg_start` | none | `{}` | `{ok, started, pid, suspended}` 或 `{error}` |
-| `dbg_exit` | none | `{}` | `{ok, exited, note?}` 或 `{error}` |
-| `dbg_continue` | none | `{}` | `{ok, continued, note?}` 或 `{error}` |
-| `dbg_run_to` | `addr: int | str` | `{"addr":"0x401000"}` | `{ok, requested, continued, suspended?, used_temp_bpt, cleaned_temp_bpt, note?}` 或 `{error}` |
-| `dbg_add_bp` | `addr: int | str` | `{"addr":"0x401000,0x401020"}` | `[{query, ok, ea, existed, added, error, note?}]` |
-| `dbg_delete_bp` | `addr: int | str` | `{"addr":"0x401000"}` | `[{query, ok, ea, existed, deleted, error, note?}]` |
-| `dbg_enable_bp` | `items: [{address, enable}]` | `{"items":[{"address":"0x401000","enable":false}]}` | `[{ok, ea, existed, enabled, changed, note?}]` 或每项 `{error}` |
-| `dbg_step_into` | none | `{}` | `{ok, stepped, note?}` 或 `{error}` |
-| `dbg_step_over` | none | `{}` | `{ok, stepped, note?}` 或 `{error}` |
-| `dbg_read_mem` | `regions: [{address, size}]` | `{"regions":[{"address":"0x7FF600001000","size":32}]}` | `[{address, size, bytes, hex, error}]` |
+| `dbg_regs` | none | `{}` | `{registers, note?}`；`registers` 为 `[{name, value}]` |
+| `dbg_callstack` | none | `{}` | `{frames, note?}`；`frames` 为 `[{index, ea, func}]` |
+| `dbg_list_bps` | none | `{}` | `{total, breakpoints}`；`breakpoints` 为 `[{ea, enabled?, size?, type?}]` |
+| `dbg_start` | none | `{}` | `{started, pid, suspended}` 或 `{error}` |
+| `dbg_exit` | none | `{}` | `{exited, note?}` 或 `{error}` |
+| `dbg_continue` | none | `{}` | `{continued, note?}` 或 `{error}` |
+| `dbg_run_to` | `addr: int | str` | `{"addr":"0x401000"}` | `{requested, continued, suspended?, used_temp_bpt, cleaned_temp_bpt, note?}` 或 `{error}` |
+| `dbg_add_bp` | `addr: int | str` | `{"addr":"0x401000,0x401020"}` | `[{ea, existed, added, error?, note?}]` |
+| `dbg_delete_bp` | `addr: int | str` | `{"addr":"0x401000"}` | `[{ea, existed, deleted, error?, note?}]` |
+| `dbg_enable_bp` | `items: [{address, enable}]` | `{"items":[{"address":"0x401000","enable":false}]}` | `[{ea, existed, enabled, changed, note?}]` 或每项 `{error}` |
+| `dbg_step_into` | none | `{}` | `{stepped, note?}` 或 `{error}` |
+| `dbg_step_over` | none | `{}` | `{stepped, note?}` 或 `{error}` |
+| `dbg_read_mem` | `regions: [{address, size}]` | `{"regions":[{"address":"0x7FF600001000","size":32}]}` | `[{address, size, hex, error}]` |
 | `dbg_write_mem` | `regions: [{address, bytes}]` | `{"regions":[{"address":"0x7FF600001000","bytes":[144,144]}]}` | `[{address, size, written, error}]` |
-| `dbg_status` | none | `{}` | `{ok, debugger_on, state, pid, threads, current_thread, ip, sp}` |
-| `dbg_thread_regs` | `thread_ids?: int | str | list`, `names?: str` | `{"names":"RIP,RSP"}` | `{ok, threads:[{tid, registers:[{name, value, int?}]}]}` |
+| `dbg_status` | none | `{}` | `{debugger_on, state, pid, threads, current_thread, ip, sp}` |
+| `dbg_thread_regs` | `thread_ids?: int | str | list`, `names?: str` | `{"names":"RIP,RSP"}` | `{threads:[{tid, registers:[{name, value}]}]}` |
 
 说明：
 
 - 全部 debug 工具都被标记为 unsafe
-- 大多数 debug 工具要求调试器已激活；未激活时通常返回 `{ok:false,...}` 或 `{error:"debugger not active"}`
+- 大多数 debug 工具要求调试器已激活；未激活时通常返回 `{error:"debugger not active"}` 或带 `note` 的空结果
 
 ### 4.10 Instance Lifecycle Tool
 
@@ -370,7 +370,7 @@ gateway/control 面的包装错误常见格式：
 | `ida://function/{addr}/decompile` | `addr` path param | `{"uri":"ida://function/0x401000/decompile"}` | `{kind:"function_decompile", address, name, end_address, decompiled}` |
 | `ida://function/{addr}/disasm` | `addr` path param | `{"uri":"ida://function/0x401000/disasm"}` | `{kind:"function_disasm", address, name, end_address, count, items}`；`items` 为 `[{address, bytes, text, comment}]` |
 | `ida://function/{addr}/basic_blocks` | `addr` path param | `{"uri":"ida://function/0x401000/basic_blocks"}` | `{kind:"function_basic_blocks", address, name, end_address, count, items}` |
-| `ida://function/{addr}/stack` | `addr` path param | `{"uri":"ida://function/0x401000/stack"}` | `{kind:"function_stack", address, name, method, count, items, frame_variables?, local_variables?}` |
+| `ida://function/{addr}/stack` | `addr` path param | `{"uri":"ida://function/0x401000/stack"}` | `{kind:"function_stack", address, name, method, count, items, local_variables?}` |
 | `ida://strings` | none | `{"uri":"ida://strings"}` | `{kind:"strings", count, items:[{address, length, type, text}]}` |
 | `ida://globals` | none | `{"uri":"ida://globals"}` | `{kind:"globals", count, items:[{address, name, size}]}` |
 | `ida://types` | none | `{"uri":"ida://types"}` | `{kind:"types", count, items:[{ordinal, name, decl}]}` |
@@ -386,7 +386,7 @@ gateway/control 面的包装错误常见格式：
 | `ida://xrefs/to/{addr}/summary` | address | `{"uri":"ida://xrefs/to/0x401000/summary"}` | `{kind:"xrefs_to_summary", address, count, code_count, data_count, items}` |
 | `ida://xrefs/from/{addr}` | address | `{"uri":"ida://xrefs/from/0x401000"}` | `{kind:"xrefs_from", address, count, items:[{address, type, is_code}]}` |
 | `ida://xrefs/from/{addr}/summary` | address | `{"uri":"ida://xrefs/from/0x401000/summary"}` | `{kind:"xrefs_from_summary", address, count, code_count, data_count, items}` |
-| `ida://memory/{addr}` | address path param, `size` query param | `{"uri":"ida://memory/0x401000?size=32"}` | `{kind:"memory", address, size, bytes, hex}` |
+| `ida://memory/{addr}` | address path param, `size` query param | `{"uri":"ida://memory/0x401000?size=32"}` | `{kind:"memory", address, size, hex}` |
 
 ## 6. Gateway Internal HTTP Endpoints
 
@@ -484,3 +484,7 @@ mcp_legacy_protocol = true
 ```
 
 非 loopback 客户端需携带配置的 `gateway_token` 作为 bearer token；本机 loopback 继续免认证。
+
+## Tool result encoding
+
+所有工具结果只返回单个 text content block（结构化数据为紧凑 JSON 文本，`decompile` 为纯文本伪代码），不附带重复的 `structuredContent` 副本——客户端上下文中每个结果只出现一次。分页结果统一为 `{total, items}`。

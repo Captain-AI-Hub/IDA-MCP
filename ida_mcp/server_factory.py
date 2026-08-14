@@ -6,9 +6,9 @@ from typing import Optional
 
 from .api_loader import ensure_api_modules_loaded
 from .config import get_server_name
-from .rpc import get_resources, get_tool_specs
+from .rpc import get_resources, get_tool_specs, text_result_tool
 
-__version__ = "0.7.1"
+__version__ = "0.8.0"
 
 
 def create_mcp_server(
@@ -33,7 +33,7 @@ def create_mcp_server(
         if spec.unsafe and not enable_unsafe:
             continue
 
-        mcp.tool(description=spec.description)(spec.fn)
+        mcp.tool(description=spec.description)(text_result_tool(spec.fn))
 
     for uri, fn in get_resources().items():
         try:

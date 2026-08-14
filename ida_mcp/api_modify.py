@@ -632,9 +632,6 @@ def apply_patch(
         "input_size": input_size,
         "applied": len(applied),
         "skipped": len(skipped),
-        "patches": applied[:100],
-        "skipped_patches": skipped[:100],
-        "truncated": len(applied) > 100 or len(skipped) > 100,
     }
 
 
@@ -690,8 +687,6 @@ def add_bookmark(
         return {
             "address": hex_addr(ea),
             "slot": slot,
-            "description": description or "",
-            "added": True,
         }
     except Exception as e:
         return {"error": f"bookmark failed: {e}", "address": hex_addr(ea)}
@@ -754,10 +749,8 @@ def patch_asm(
 
         results.append({
             "address": hex_addr(ea),
-            "asm": asm_text,
             "bytes": data.hex(" "),
             "size": len(data),
-            "patched": True,
         })
 
     return results
@@ -954,7 +947,6 @@ def diff_before_after(
     truncated = len(diff_lines) > _DIFF_MAX_LINES
 
     return {
-        "query": address,
         "function": info["name"],
         "action": action,
         "action_result": action_result,

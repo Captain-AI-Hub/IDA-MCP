@@ -96,7 +96,6 @@ class TestStackFrame:
         assert "start_ea" in frame_info
         assert "variables" in frame_info
         assert frame_info.get("method") == "ida_frame"
-        assert frame_info.get("frame_variables") == frame_info["variables"]
         assert isinstance(frame_info.get("local_variables", []), list)
         variables = {var["name"]: var for var in frame_info["variables"]}
         expected = complex_baseline["stack_frame"]["ida_mcp_stack_heavy_transform"]

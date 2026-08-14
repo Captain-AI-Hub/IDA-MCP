@@ -402,8 +402,7 @@ def function_disasm_resource(addr: str) -> str:
         return _resource_error("disasm_failed", str(result["error"]), address=addr)
     instructions = [
         {
-            "address": hex_addr(item["ea"]),
-            "bytes": item.get("bytes"),
+            "address": item["ea"],
             "text": item.get("text"),
             "comment": item.get("comment"),
         }
@@ -456,9 +455,8 @@ def function_stack_resource(addr: str) -> str:
     result = stack_frame_for_function(addr)
     if result.get("error"):
         return _resource_error("stack_frame_failed", str(result["error"]), address=addr)
-    frame_variables = result.get("frame_variables", [])
+    items = result.get("variables", [])
     local_variables = result.get("local_variables", [])
-    items = frame_variables or result.get("variables", [])
     return _resource_detail(
         "function_stack",
         address=result.get("start_ea"),
@@ -466,7 +464,6 @@ def function_stack_resource(addr: str) -> str:
         method=result.get("method"),
         count=len(items),
         items=items,
-        frame_variables=frame_variables,
         local_variables=local_variables,
     )
 
@@ -634,7 +631,6 @@ def memory_resource(addr: str, size: int = 16) -> str:
         "memory",
         address=hex_addr(address),
         size=first.get("size"),
-        bytes=first.get("bytes"),
         hex=first.get("hex"),
     )
 

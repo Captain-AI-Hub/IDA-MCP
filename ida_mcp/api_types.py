@@ -808,7 +808,6 @@ def infer_types(
             continue
 
         results.append({
-            "query": query,
             "address": hex_addr(int(ea)),
             "type": type_text,
             "applied": applied,

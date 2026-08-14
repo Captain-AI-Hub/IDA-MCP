@@ -106,27 +106,25 @@ def dbg_regs() -> dict:
     """Get all debugger registers (requires active debugger)."""
     try:
         if not ida_dbg.is_debugger_on():
-            return {"ok": False, "registers": [], "note": "debugger not active"}
+            return {"error": "debugger not active"}
     except Exception:
         return {"error": "cannot determine debugger state"}
     
     regs: List[dict] = []
     names: List[str] = []
-    notes: List[str] = []
     
     # try to get register names
     try:
         if hasattr(ida_dbg, 'get_dbg_reg_names'):
             names = list(ida_dbg.get_dbg_reg_names())  # type: ignore
-    except Exception as e:
-        notes.append(f"get_dbg_reg_names: {e}")
+    except Exception:
+        pass
     
     # if no names available, fall back to common x64 registers
     if not names:
         names = ["RAX", "RBX", "RCX", "RDX", "RSI", "RDI", "RBP", "RSP", 
                  "R8", "R9", "R10", "R11", "R12", "R13", "R14", "R15",
                  "RIP", "RFLAGS", "CS", "SS", "DS", "ES", "FS", "GS"]
-        notes.append("using hardcoded x64 register names")
     
     for n in names:
         try:
@@ -142,15 +140,13 @@ def dbg_regs() -> dict:
                 elif v > 0xFF:
                     bits = 16
                 width = bits // 4
-                regs.append({"name": n, "value": f"0x{v:0{width}X}", "int": int(v)})
+                regs.append({"name": n, "value": f"0x{v:0{width}X}"})
             else:
                 regs.append({"name": n, "value": repr(v)})
         except Exception:
             continue
     
-    result: dict = {"ok": True, "registers": regs}
-    if notes:
-        result["notes"] = notes
+    result: dict = {"registers": regs}
     if not regs:
         result["note"] = "no registers retrieved (process may be running)"
     
@@ -168,7 +164,7 @@ def dbg_callstack() -> dict:
     """Get current call stack (requires active debugger)."""
     try:
         if not ida_dbg.is_debugger_on():
-            return {"ok": False, "frames": [], "note": "debugger not active"}
+            return {"frames": [], "note": "debugger not active"}
     except Exception:
         return {"error": "cannot determine debugger state"}
     
@@ -191,7 +187,7 @@ def dbg_callstack() -> dict:
                         func_name = None
                     frames.append({
                         'index': idx,
-                        'ea': ea,
+                        'ea': hex_addr(ea),
                         'func': func_name,
                     })
                 except Exception:
@@ -217,7 +213,7 @@ def dbg_callstack() -> dict:
                             func_name = None
                         frames.append({
                             'index': len(frames),
-                            'ea': ea,
+                            'ea': hex_addr(ea),
                             'func': func_name,
                         })
                     except Exception:
@@ -230,9 +226,9 @@ def dbg_callstack() -> dict:
             pass
     
     if not collected:
-        return {"ok": False, "frames": [], "note": "call stack API unavailable or empty"}
+        return {"frames": [], "note": "call stack API unavailable or empty"}
     
-    return {"ok": True, "frames": frames}
+    return {"frames": frames}
 
 
 # ============================================================================
@@ -261,7 +257,7 @@ def dbg_list_bps() -> dict:
         if ea in (None, idaapi.BADADDR):
             continue
         
-        info: dict = {'ea': int(ea)}
+        info: dict = {'ea': hex_addr(ea)}
         
         # flags / enabled
         flags = None
@@ -302,7 +298,7 @@ def dbg_list_bps() -> dict:
         
         bps.append(info)
     
-    return {"ok": True, "total": len(bps), "breakpoints": bps}
+    return {"total": len(bps), "breakpoints": bps}
 
 
 # ============================================================================
@@ -316,7 +312,7 @@ def dbg_start() -> dict:
     """Start debugger process (debugger type should be configured manually in IDA)."""
     try:
         if ida_dbg.is_debugger_on():
-            return {"ok": True, "started": False, "note": "debugger already running"}
+            return {"started": False, "note": "debugger already running"}
     except Exception:
         pass
     
@@ -355,7 +351,7 @@ def dbg_start() -> dict:
             except Exception:
                 pass
     
-    return {"ok": ok, "started": ok, "pid": pid, "suspended": suspended}
+    return {"started": ok, "pid": pid, "suspended": suspended}
 
 
 @unsafe
@@ -365,7 +361,7 @@ def dbg_exit() -> dict:
     """Exit debugger."""
     try:
         if not ida_dbg.is_debugger_on():
-            return {"ok": False, "exited": False, "note": "debugger not active"}
+            return {"exited": False, "note": "debugger not active"}
     except Exception:
         return {"error": "cannot determine debugger state"}
     
@@ -374,7 +370,7 @@ def dbg_exit() -> dict:
     except Exception as e:
         return {"error": f"exit_process failed: {e}"}
     
-    return {"ok": True, "exited": True}
+    return {"exited": True}
 
 
 @unsafe
@@ -384,7 +380,7 @@ def dbg_continue() -> dict:
     """Continue execution."""
     try:
         if not ida_dbg.is_debugger_on():
-            return {"ok": False, "continued": False, "note": "debugger not active"}
+            return {"continued": False, "note": "debugger not active"}
     except Exception:
         return {"error": "cannot determine debugger state"}
     
@@ -410,9 +406,9 @@ def dbg_continue() -> dict:
     if not tried:
         return {"error": "no continue API available"}
     if not cont_ok and errors:
-        return {"ok": False, "continued": False, "note": "; ".join(errors)[:200]}
+        return {"continued": False, "note": "; ".join(errors)[:200]}
     
-    return {"ok": True, "continued": bool(cont_ok)}
+    return {"continued": bool(cont_ok)}
 
 
 @unsafe
@@ -497,15 +493,15 @@ def dbg_run_to(
         if not cleaned_temp_bpt and _breakpoint_exists(address):
             notes.append('failed to clean temporary breakpoint')
     
-    ok = requested or used_temp_bpt
     result: dict = {
-        'ok': ok,
         'requested': requested,
         'continued': continued,
         'suspended': suspended if used_temp_bpt else None,
         'used_temp_bpt': used_temp_bpt,
         'cleaned_temp_bpt': cleaned_temp_bpt,
     }
+    if not (requested or used_temp_bpt):
+        result['error'] = 'run_to failed'
     if notes:
         result['note'] = '; '.join(notes)[:300]
     
@@ -577,12 +573,12 @@ def _set_breakpoint_single(query: str) -> dict:
     
     ok = existed or added
     result: dict = {
-        'query': query,
-        'ok': ok,
-        'ea': int(address),
+        'ea': hex_addr(address),
         'existed': bool(existed and not added),
         'added': bool(added),
     }
+    if not ok:
+        result['error'] = 'failed to add breakpoint'
     if notes:
         result['note'] = '; '.join(notes)[:300]
     
@@ -636,12 +632,12 @@ def _delete_breakpoint_single(query: str) -> dict:
     
     ok = not existed or deleted
     result: dict = {
-        'query': query,
-        'ok': ok,
-        'ea': int(address),
+        'ea': hex_addr(address),
         'existed': bool(existed),
         'deleted': bool(deleted),
     }
+    if not ok:
+        result['error'] = 'failed to delete breakpoint'
     if notes:
         result['note'] = '; '.join(notes)[:300]
     
@@ -662,12 +658,12 @@ def dbg_enable_bp(
         enable = item.get("enable", True)
         
         if addr is None:
-            results.append({"error": "invalid address", "item": item})
+            results.append({"error": "invalid address"})
             continue
         
         parsed = parse_address(addr)
         if not parsed["ok"] or parsed["value"] is None:
-            results.append({"error": "invalid address", "item": item})
+            results.append({"error": "invalid address"})
             continue
         
         address = parsed["value"]
@@ -731,12 +727,13 @@ def _enable_breakpoint_single(address: int, enable: bool) -> dict:
         pass
     
     result: dict = {
-        'ok': existed,
-        'ea': int(address),
+        'ea': hex_addr(address),
         'existed': bool(existed),
         'enabled': bool(enabled_now),
         'changed': bool(changed),
     }
+    if not existed:
+        result['error'] = 'breakpoint not found'
     if notes:
         result['note'] = '; '.join(notes)[:300]
     
@@ -754,7 +751,7 @@ def dbg_step_into() -> dict:
     """Step into instruction."""
     try:
         if not ida_dbg.is_debugger_on():
-            return {"ok": False, "stepped": False, "note": "debugger not active"}
+            return {"stepped": False, "note": "debugger not active"}
     except Exception:
         return {"error": "cannot determine debugger state"}
     
@@ -780,9 +777,9 @@ def dbg_step_into() -> dict:
     if not tried:
         return {"error": "no step_into API available"}
     if not step_ok and errors:
-        return {"ok": False, "stepped": False, "note": "; ".join(errors)[:200]}
+        return {"stepped": False, "note": "; ".join(errors)[:200]}
     
-    return {"ok": True, "stepped": bool(step_ok)}
+    return {"stepped": bool(step_ok)}
 
 
 @unsafe
@@ -792,7 +789,7 @@ def dbg_step_over() -> dict:
     """Step over instruction."""
     try:
         if not ida_dbg.is_debugger_on():
-            return {"ok": False, "stepped": False, "note": "debugger not active"}
+            return {"stepped": False, "note": "debugger not active"}
     except Exception:
         return {"error": "cannot determine debugger state"}
     
@@ -818,9 +815,9 @@ def dbg_step_over() -> dict:
     if not tried:
         return {"error": "no step_over API available"}
     if not step_ok and errors:
-        return {"ok": False, "stepped": False, "note": "; ".join(errors)[:200]}
+        return {"stepped": False, "note": "; ".join(errors)[:200]}
     
-    return {"ok": True, "stepped": bool(step_ok)}
+    return {"stepped": bool(step_ok)}
 
 
 # ============================================================================
@@ -891,7 +888,6 @@ def dbg_read_mem(
             results.append({
                 "address": hex_addr(address),
                 "size": len(byte_list),
-                "bytes": byte_list,
                 "hex": hex_str,
             })
         except Exception as e:
@@ -976,11 +972,11 @@ def dbg_status() -> dict:
     """Get debugger status: state, pid, threads, current instruction pointer."""
     try:
         if not ida_dbg.is_debugger_on():
-            return {"ok": False, "debugger_on": False, "note": "debugger not active"}
+            return {"debugger_on": False, "note": "debugger not active"}
     except Exception:
         return {"error": "cannot determine debugger state"}
 
-    result: Dict[str, Any] = {"ok": True, "debugger_on": True}
+    result: Dict[str, Any] = {"debugger_on": True}
 
     try:
         state_code = ida_dbg.get_process_state()
@@ -1034,14 +1030,14 @@ def dbg_thread_regs(
     """Read registers of one or more debug threads (temporarily selects each thread, then restores)."""
     try:
         if not ida_dbg.is_debugger_on():
-            return {"ok": False, "threads": [], "note": "debugger not active"}
+            return {"threads": [], "note": "debugger not active"}
     except Exception:
         return {"error": "cannot determine debugger state"}
 
     susp = getattr(ida_dbg, "DSTATE_SUSP", None)
     try:
         if susp is not None and ida_dbg.get_process_state() != susp:
-            return {"ok": False, "threads": [], "note": "process is not suspended"}
+            return {"threads": [], "note": "process is not suspended"}
     except Exception:
         pass
 
@@ -1088,7 +1084,7 @@ def dbg_thread_regs(
                 continue
             if isinstance(v, int):
                 width = 16 if v > 0xFFFFFFFF else 8
-                regs.append({"name": reg_name, "value": f"0x{v:0{width}X}", "int": int(v)})
+                regs.append({"name": reg_name, "value": f"0x{v:0{width}X}"})
             else:
                 regs.append({"name": reg_name, "value": repr(v)})
         return regs
@@ -1116,4 +1112,4 @@ def dbg_thread_regs(
             except Exception:
                 pass
 
-    return {"ok": True, "threads": threads}
+    return {"threads": threads}

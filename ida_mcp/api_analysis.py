@@ -265,19 +265,24 @@ def _signature_from_pseudocode(info: dict) -> Optional[str]:
 @idaread
 def decompile(
     addr: Annotated[Union[int, str], "Function address or name (single or comma-separated)"],
-) -> List[dict]:
+) -> str:
     """Decompile function(s) at given address(es). Requires Hex-Rays."""
     wait_for_auto_analysis()
     # parse address list
     from .utils import normalize_list_input
     queries = normalize_list_input(addr)
     
-    results = []
+    chunks: List[str] = []
     for query in queries:
         result = _decompile_single(query)
-        results.append(result)
+        error = result.get("error")
+        if error:
+            chunks.append(f"// error: {error} ({query})")
+            continue
+        header = f"// {result['name']} {result['start_ea']}-{result['end_ea']}"
+        chunks.append(f"{header}\n{result['decompiled']}")
     
-    return results
+    return "\n\n".join(chunks)
 
 
 def _decompile_single(query: str) -> dict:
@@ -315,7 +320,7 @@ def decompile_function(query: Union[int, str]) -> dict:
 def disasm(
     addr: Annotated[Union[int, str], "Function address(es) - single or comma-separated"],
 ) -> List[dict]:
-    """Disassemble function(s) with full details."""
+    """Disassemble function(s) into listing lines (hex addresses, no color tags)."""
     wait_for_auto_analysis()
     from .utils import normalize_list_input
     queries = normalize_list_input(addr)
@@ -344,34 +349,7 @@ def _disasm_single(query: str) -> dict:
             if not idaapi.is_code(flags):
                 continue
             
-            insn_len = 0
-            try:
-                insn = idaapi.insn_t()
-                if idaapi.decode_insn(insn, head_ea):
-                    insn_len = insn.size
-            except Exception:
-                insn_len = 0
-            
-            # instruction text
-            text = None
-            try:
-                text = idaapi.generate_disasm_line(head_ea, 0)
-            except Exception:
-                text = None
-            if text is None:
-                text = "?"
-            
-            # instruction bytes
-            b_hex = None
-            if insn_len:
-                try:
-                    raw = ida_bytes.get_bytes(head_ea, insn_len)
-                    if raw:
-                        b_hex = raw.hex().upper()
-                        if len(b_hex) > 32:
-                            b_hex = b_hex[:32] + '...'
-                except Exception:
-                    b_hex = None
+            text = _listing_text(head_ea) or "?"
             
             # comments
             cmt_parts: List[str] = []
@@ -387,19 +365,18 @@ def _disasm_single(query: str) -> dict:
                     cmt_parts.append(c2)
             except Exception:
                 pass
-            comment = ' // '.join(cmt_parts) if cmt_parts else None
             
-            instructions.append({
-                'ea': int(head_ea),
-                'bytes': b_hex,
+            insn: Dict[str, Any] = {
+                'ea': hex_addr(head_ea),
                 'text': text,
-                'comment': comment,
-            })
+            }
+            if cmt_parts:
+                insn['comment'] = ' // '.join(cmt_parts)
+            instructions.append(insn)
         except Exception:
             continue
     
     return {
-        'query': query,
         'name': info["name"],
         'start_ea': hex_addr(start),
         'end_ea': hex_addr(end),
@@ -461,40 +438,11 @@ def linear_disasm(
                     return {'error': 'decode_failed'}
                 break
             
-            # read flags to determine is_code
-            is_code = False
-            try:
-                flags = idaapi.get_full_flags(ea)
-                is_code = bool(idaapi.is_code(flags))
-            except Exception:
-                pass
-            
-            # instruction text
-            text = None
-            try:
-                text = idaapi.generate_disasm_line(ea, 0)
-            except Exception:
-                text = None
-            if text is None:
-                text = '?'
-            
-            # bytes
-            b_hex = None
-            try:
-                raw = ida_bytes.get_bytes(ea, size)
-                if raw:
-                    b_hex = raw.hex().upper()
-                    if len(b_hex) > 32:
-                        b_hex = b_hex[:32] + '...'
-            except Exception:
-                b_hex = None
+            text = _listing_text(ea) or '?'
             
             collected.append({
-                'ea': int(ea),
-                'bytes': b_hex,
+                'ea': hex_addr(ea),
                 'text': text,
-                'is_code': is_code,
-                'len': size,
             })
             ea += size
         except Exception:
@@ -506,8 +454,7 @@ def linear_disasm(
         return {'error': 'no_instructions'}
     
     result: dict = {
-        'start_address': int(addr_int),
-        'count': count,
+        'start_address': hex_addr(addr_int),
         'instructions': collected,
     }
     if len(collected) >= count:
@@ -558,7 +505,6 @@ def get_callers(
 
     items = _sorted_group_items(groups)
     return {
-        "query": addr,
         "function": info["name"],
         "start_ea": hex_addr(info["start_ea"]),
         "end_ea": hex_addr(info["end_ea"]),
@@ -611,7 +557,6 @@ def get_callees(
 
     items = _sorted_group_items(groups)
     return {
-        "query": addr,
         "function": info["name"],
         "start_ea": hex_addr(info["start_ea"]),
         "end_ea": hex_addr(info["end_ea"]),
@@ -633,26 +578,21 @@ def get_function_signature(
 
     signature = _signature_from_typeinfo(info)
     source = "typeinfo"
-    inferred = False
 
     if not signature:
         signature = _signature_from_pseudocode(info)
         source = "pseudocode"
-        inferred = True
 
     if not signature:
         signature = f"void {info['name']}(void)"
         source = "fallback_name"
-        inferred = True
 
     return {
-        "query": addr,
         "function": info["name"],
         "start_ea": hex_addr(info["start_ea"]),
         "end_ea": hex_addr(info["end_ea"]),
         "signature": signature,
         "source": source,
-        "inferred": inferred,
     }
 
 
@@ -699,7 +639,6 @@ def _xrefs_to_single(query: str) -> dict:
         return {"error": f"xrefs failed: {e}", "query": query}
     
     return {
-        "query": query,
         "address": hex_addr(address),
         "total": len(xrefs),
         "xrefs": xrefs,
@@ -750,7 +689,6 @@ def _xrefs_from_single(query: str) -> dict:
         return {"error": f"xrefs failed: {e}", "query": query}
     
     return {
-        "query": query,
         "address": hex_addr(address),
         "total": len(xrefs),
         "xrefs": xrefs,
@@ -771,10 +709,13 @@ def xrefs_from_address(query: Union[int, str]) -> dict:
 def xrefs_to_field(
     struct_name: Annotated[str, "Struct name"],
     field_name: Annotated[str, "Field name"],
+    limit: Annotated[int, "Maximum matches to return (1..500)"] = 50,
 ) -> dict:
     """Heuristic search for struct field references."""
     if not struct_name or not field_name:
         return {"error": "empty struct_name or field_name"}
+    if limit < 1 or limit > 500:
+        return {"error": "limit out of range (1..500)"}
     
     if ida_typeinf is None:
         return {"error": "type APIs unavailable"}
@@ -811,7 +752,6 @@ def xrefs_to_field(
     fname_lower = field_name.lower()
     matches: List[dict] = []
     truncated = False
-    MAX_MATCH = 500
     
     try:
         for fea in ida_shims.iter_function_starts():
@@ -842,8 +782,8 @@ def xrefs_to_field(
                             hit = True
                     
                     if hit:
-                        matches.append({'ea': int(ea), 'line': line})
-                        if len(matches) >= MAX_MATCH:
+                        matches.append({'ea': hex_addr(ea), 'line': _listing_text(ea) or line})
+                        if len(matches) >= limit:
                             truncated = True
                             break
                 except Exception:
@@ -1073,7 +1013,6 @@ def _basic_blocks_single(addr: Union[int, str]) -> dict:
     blocks.sort(key=lambda x: int(x['start_ea'], 16))
     
     return {
-        "query": addr,
         "function": info["name"],
         "start_ea": hex_addr(info["start_ea"]),
         "end_ea": hex_addr(info["end_ea"]),
@@ -1166,7 +1105,6 @@ def find_regex(
             break
 
     result: Dict[str, Any] = {
-        "pattern": pattern,
         "count": len(matches),
         "items": matches,
     }
@@ -1219,8 +1157,6 @@ def search_text(
             break
 
     result: Dict[str, Any] = {
-        "query": query,
-        "regex": bool(regex),
         "count": len(matches),
         "items": matches,
     }
@@ -1271,8 +1207,6 @@ def find_instructions(
             break
 
     result: Dict[str, Any] = {
-        "mnemonic": mnemonic,
-        "pattern": pattern,
         "count": len(matches),
         "items": matches,
     }
@@ -1352,9 +1286,6 @@ def callgraph(
 
     result: Dict[str, Any] = {
         "roots": root_names,
-        "max_depth": max_depth,
-        "total_nodes": len(nodes),
-        "total_edges": len(edges),
         "nodes": sorted(nodes.values(), key=lambda item: (item["depth"], item["ea"])),
         "edges": edges,
     }
@@ -1432,12 +1363,7 @@ def trace_data_flow(
                 queue.append((other, depth + 1))
 
     result: Dict[str, Any] = {
-        "query": address,
         "start": hex_addr(int(start)),
-        "direction": direction_norm,
-        "max_depth": max_depth,
-        "total_nodes": len(nodes),
-        "total_edges": len(edges),
         "nodes": sorted(nodes.values(), key=lambda item: (item["depth"], item["ea"])),
         "edges": edges,
     }

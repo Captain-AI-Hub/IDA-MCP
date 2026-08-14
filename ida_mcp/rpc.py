@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import functools
 import inspect
+import json
 from typing import Any, Callable, Dict, Optional, get_type_hints
 
 
@@ -85,6 +87,32 @@ def get_tool_specs() -> Dict[str, ToolSpec]:
 
 def get_resources() -> Dict[str, Callable]:
     return dict(_resources)
+
+
+def text_result_tool(fn: Callable) -> Callable:
+    """Wrap a tool function so FastMCP emits a single text content block.
+
+    FastMCP mirrors dict/list return values into ``structuredContent`` in
+    addition to the JSON text content, which makes chat clients render (and
+    tokenize) every result twice. Returning a plain string keeps exactly one
+    copy on the wire; structured data is sent as compact JSON text.
+    """
+
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> str:
+        result = fn(*args, **kwargs)
+        if isinstance(result, str):
+            return result
+        return json.dumps(result, ensure_ascii=False, default=str, separators=(",", ":"))
+
+    # Drop the return annotation so FastMCP does not generate an output schema;
+    # with an output schema it would mirror the payload into structuredContent.
+    signature = inspect.signature(fn)
+    wrapper.__signature__ = signature.replace(return_annotation=inspect.Signature.empty)  # type: ignore[attr-defined]
+    annotations = dict(getattr(fn, "__annotations__", {}))
+    annotations.pop("return", None)
+    wrapper.__annotations__ = annotations
+    return wrapper
 
 
 def is_unsafe(fn: Callable) -> bool:
