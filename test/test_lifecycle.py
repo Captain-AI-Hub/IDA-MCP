@@ -221,7 +221,10 @@ class TestLifecycleErrors:
                                         ):
                                             with patch(
                                                 "subprocess.Popen"
-                                            ) as mock_popen:
+                                            ) as mock_popen, patch(
+                                                "ida_mcp.proxy.lifecycle.registry.register_pending_instance",
+                                                return_value=True,
+                                            ):
                                                 first = lifecycle.open_in_ida(__file__)
                                                 second = lifecycle.open_in_ida(__file__)
 
@@ -272,7 +275,10 @@ class TestLifecycleErrors:
                                         ):
                                             with patch(
                                                 "subprocess.Popen"
-                                            ) as mock_popen:
+                                            ) as mock_popen, patch(
+                                                "ida_mcp.proxy.lifecycle.registry.register_pending_instance",
+                                                return_value=True,
+                                            ):
                                                 result = lifecycle.open_in_ida(
                                                     __file__,
                                                     extra_args=["-A", "-Llog.txt"],
@@ -320,7 +326,10 @@ class TestLifecycleErrors:
                                         ):
                                             with patch(
                                                 "subprocess.Popen"
-                                            ) as mock_popen:
+                                            ) as mock_popen, patch(
+                                                "ida_mcp.proxy.lifecycle.registry.register_pending_instance",
+                                                return_value=True,
+                                            ):
                                                 result = lifecycle.open_in_ida(
                                                     __file__,
                                                     extra_args=["-Llog.txt"],
@@ -417,7 +426,10 @@ class TestLifecycleErrors:
                                         ):
                                             with patch(
                                                 "subprocess.Popen"
-                                            ) as mock_popen:
+                                            ) as mock_popen, patch(
+                                                "ida_mcp.proxy.lifecycle.registry.register_pending_instance",
+                                                return_value=True,
+                                            ):
                                                 result = lifecycle.open_in_ida(
                                                     __file__,
                                                     extra_args=["-Llog.txt"],
@@ -516,7 +528,10 @@ class TestLifecycleErrors:
                                         "ida_mcp.proxy.lifecycle._stage_target_file_for_launch",
                                         return_value=(staged_file, staged_file),
                                     ) as mock_stage:
-                                        with patch("subprocess.Popen") as mock_popen:
+                                        with patch("subprocess.Popen") as mock_popen, patch(
+                                            "ida_mcp.proxy.lifecycle.registry.register_pending_instance",
+                                            return_value=True,
+                                        ):
                                             result = lifecycle.open_in_ida(__file__)
 
         mock_launch_bundle.assert_called_once_with(bundle_root)
@@ -550,7 +565,10 @@ class TestLifecycleErrors:
                                     "ida_mcp.proxy.lifecycle._use_direct_target_file",
                                     return_value=(direct_target, None),
                                 ) as mock_direct:
-                                    with patch("subprocess.Popen") as mock_popen:
+                                    with patch("subprocess.Popen") as mock_popen, patch(
+                                        "ida_mcp.proxy.lifecycle.registry.register_pending_instance",
+                                        return_value=True,
+                                    ):
                                         result = lifecycle.open_in_ida(__file__)
 
         mock_direct.assert_called_once_with(__file__)
@@ -694,7 +712,10 @@ class TestLifecycleErrors:
                                                 ) as mock_stage:
                                                     with patch(
                                                         "subprocess.Popen"
-                                                    ) as mock_popen:
+                                                    ) as mock_popen, patch(
+                                                        "ida_mcp.proxy.lifecycle.registry.register_pending_instance",
+                                                        return_value=True,
+                                                    ):
                                                         result = lifecycle.open_in_ida(
                                                             host_source_file,
                                                         )
@@ -753,7 +774,10 @@ class TestLifecycleErrors:
                                         ):
                                             with patch(
                                                 "subprocess.Popen"
-                                            ) as mock_popen:
+                                            ) as mock_popen, patch(
+                                                "ida_mcp.proxy.lifecycle.registry.register_pending_instance",
+                                                return_value=True,
+                                            ):
                                                 result = lifecycle.open_in_ida(
                                                     source_file
                                                 )
