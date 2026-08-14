@@ -17,12 +17,16 @@ from starlette.responses import JSONResponse
 from . import instance_registry as registry
 from .config import (
     get_gateway_token,
-    get_mcp_protocol_version,
     get_request_timeout,
     is_mcp_json_response_enabled,
     is_mcp_legacy_protocol_enabled,
     is_mcp_sessionless_enabled,
 )
+
+try:  # mcp_types ships with the MCP SDK
+    from mcp_types.version import LATEST_PROTOCOL_VERSION
+except Exception:  # pragma: no cover - defensive fallback
+    LATEST_PROTOCOL_VERSION = "2026-07-28"
 
 
 LOCALHOST = "127.0.0.1"
@@ -128,7 +132,7 @@ async def _healthz(_: Request) -> JSONResponse:
             "instance_count": len(registry._instances),
             "started_at": registry._gateway_started_at,
             "mcp": {
-                "protocol_version": get_mcp_protocol_version(),
+                "protocol_version": LATEST_PROTOCOL_VERSION,
                 "sessionless": is_mcp_sessionless_enabled(),
                 "json_response": is_mcp_json_response_enabled(),
                 "legacy_protocol": is_mcp_legacy_protocol_enabled(),

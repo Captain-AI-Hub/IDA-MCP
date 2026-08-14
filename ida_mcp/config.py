@@ -53,7 +53,6 @@ _DEFAULT_CONFIG = {
     "http_host": "127.0.0.1",
     "http_port": 11338,
     "http_path": "/mcp",
-    "mcp_protocol_version": "2026-07-28",
     "mcp_legacy_protocol": True,
     "mcp_json_response": True,
     "mcp_sessionless": True,
@@ -84,7 +83,6 @@ _HCLI_SETTING_KEYS = (
     "http_host",
     "http_port",
     "http_path",
-    "mcp_protocol_version",
     "mcp_legacy_protocol",
     "mcp_json_response",
     "mcp_sessionless",
@@ -474,13 +472,6 @@ def get_http_path() -> str:
     """Get the HTTP MCP endpoint path."""
     config = load_config()
     return str(config.get("http_path", "/mcp"))
-
-
-def get_mcp_protocol_version() -> str:
-    """Return the MCP protocol revision advertised by this gateway."""
-    config = load_config()
-    value = str(config.get("mcp_protocol_version", "2026-07-28") or "2026-07-28").strip()
-    return value or "2026-07-28"
 
 
 def is_mcp_sessionless_enabled() -> bool:

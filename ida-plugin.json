@@ -138,15 +138,6 @@
         "prompt": true
       },
       {
-        "key": "mcp_protocol_version",
-        "type": "string",
-        "required": false,
-        "default": "2026-07-28",
-        "name": "MCP protocol version",
-        "documentation": "Modern sessionless MCP protocol revision advertised by the gateway.",
-        "prompt": false
-      },
-      {
         "key": "mcp_sessionless",
         "type": "boolean",
         "required": false,

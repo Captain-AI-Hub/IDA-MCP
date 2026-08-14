@@ -475,10 +475,9 @@ Authorization: Bearer <gateway_token>
 
 Gateway MCP HTTP 已切换到 MCP `2026-07-28` 现代无状态传输：请求通过 `MCP-Protocol-Version` 和 `params._meta` 携带协议版本、client capabilities 等 envelope，不依赖 `initialize` 或 `Mcp-Session-Id`；默认返回单个 `application/json` 响应。旧版 initialize/session 客户端默认继续兼容；将 `mcp_legacy_protocol` 设为 `false` 后，握手时代的请求（`initialize`、`notifications/initialized` 或携带旧版 `MCP-Protocol-Version` 头）会被网关与实例服务器以 `-32601` JSON-RPC 错误拒绝，仅服务 `2026-07-28` 流量。
 
-配置项：
+配置项（对外宣告的协议版本始终跟随 SDK 的 `LATEST_PROTOCOL_VERSION`，不可配置）：
 
 ```ini
-mcp_protocol_version = "2026-07-28"
 mcp_sessionless = true
 mcp_json_response = true
 mcp_legacy_protocol = true

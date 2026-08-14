@@ -13,10 +13,10 @@ from typing import Any, List
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from .config import get_mcp_protocol_version, is_mcp_legacy_protocol_enabled
+from .config import is_mcp_legacy_protocol_enabled
 
 try:  # mcp_types ships with the MCP SDK
-    from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS
+    from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS, LATEST_PROTOCOL_VERSION
 except Exception:  # pragma: no cover - defensive fallback
     HANDSHAKE_PROTOCOL_VERSIONS = (
         "2024-11-05",
@@ -24,6 +24,7 @@ except Exception:  # pragma: no cover - defensive fallback
         "2025-06-18",
         "2025-11-25",
     )
+    LATEST_PROTOCOL_VERSION = "2026-07-28"
 
 _LEGACY_METHODS = frozenset({"initialize", "notifications/initialized"})
 _PROTOCOL_VERSION_HEADER = b"mcp-protocol-version"
@@ -100,7 +101,7 @@ class LegacyProtocolGateMiddleware:
         request_id = payload.get("id") if isinstance(payload, dict) else None
         message = (
             "Legacy MCP protocol (initialize/session) is disabled on this "
-            f"server; speak MCP {get_mcp_protocol_version()} instead."
+            f"server; speak MCP {LATEST_PROTOCOL_VERSION} instead."
         )
         body = json.dumps(
             {

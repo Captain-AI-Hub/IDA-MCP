@@ -381,10 +381,9 @@ debugger. API call logs are written to `.artifacts/api_logs/`.
 
 The gateway now targets the MCP `2026-07-28` modern transport with FastMCP 4 / MCP SDK 2. Modern requests use per-request `_meta` negotiation and `MCP-Protocol-Version: 2026-07-28`; they do not require `initialize` or `Mcp-Session-Id`. The gateway uses one JSON response per request (`application/json`) and remains loopback-accessible without a token. Legacy initialize/session clients remain accepted by default; set `mcp_legacy_protocol = false` to reject handshake-era requests (`initialize`, `notifications/initialized`, or a handshake-era `MCP-Protocol-Version` header) with a `-32601` JSON-RPC error so only `2026-07-28` traffic is served.
 
-The compatibility knobs are:
+The compatibility knobs are (the advertised protocol version always tracks the SDK's `LATEST_PROTOCOL_VERSION` and is not configurable):
 
 ```ini
-mcp_protocol_version = "2026-07-28"
 mcp_sessionless = true
 mcp_json_response = true
 mcp_legacy_protocol = true
