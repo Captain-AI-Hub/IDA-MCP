@@ -2,7 +2,7 @@
   "IDAMetadataDescriptorVersion": 1,
   "plugin": {
     "name": "IDA-MCP",
-    "version": "0.8.0",
+    "version": "0.8.1",
     "entryPoint": "ida_mcp.py",
     "urls": {
       "repository": "https://github.com/Captain-AI-Hub/IDA-MCP"

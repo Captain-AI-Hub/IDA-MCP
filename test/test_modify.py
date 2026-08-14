@@ -418,3 +418,33 @@ class TestApplyPatchHelpers:
 
         assert result["error"] == "output_path must not be the input file"
         assert input_file.read_bytes() == b"ABCD"
+
+
+class TestAddBookmark:
+    """Bookmark tests (IDA 9.x compatible path)."""
+
+    def test_add_bookmark(self, tool_caller, first_function_address):
+        """Add a bookmark and verify slot allocation, then erase it."""
+        addr = hex(first_function_address)
+        result = tool_caller("add_bookmark", {"address": addr, "description": "mcp-pytest-bookmark"})
+
+        assert isinstance(result, dict)
+        if "error" in result:
+            pytest.skip(f"bookmarks unavailable: {result['error']}")
+        assert result["address"].lower() == addr.lower()
+        slot = result["slot"]
+        assert isinstance(slot, int) and slot >= 0
+
+        # cleanup: erase the bookmark we just created
+        tool_caller("py_eval", {"code": (
+            "import ida_kernwin, ida_moves\n"
+            "try:\n"
+            "    pid = ida_kernwin.get_place_class_id('idaplace_t')\n"
+            "    place = ida_kernwin.get_place_class_template(pid).clone()\n"
+            "    ida_kernwin.place_t.as_idaplace_t(place).ea = " + str(first_function_address) + "\n"
+            "except AttributeError:\n"
+            "    place = ida_kernwin.ea2place(" + str(first_function_address) + ")\n"
+            "entry = ida_moves.lochist_entry_t()\n"
+            "entry.set_place(place)\n"
+            "ida_moves.bookmarks_t.erase(entry, " + str(slot) + ", None)\n"
+        )})

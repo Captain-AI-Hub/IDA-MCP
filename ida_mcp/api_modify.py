@@ -663,18 +663,34 @@ def add_bookmark(
         return {"error": "invalid address", "address": address}
     ea = parsed["value"]
 
-    if ida_moves is None or ida_kernwin is None or not hasattr(ida_kernwin, "ea2place"):
+    if ida_moves is None or ida_kernwin is None:
         return {"error": "bookmarks API unavailable in this IDA build", "address": hex_addr(ea)}
 
     try:
-        entry = ida_moves.lochist_entry_t()
-        entry.set_place(ida_kernwin.ea2place(ea))
+        # Build a place for the target address. IDA 9.x removed
+        # ida_kernwin.ea2place; clone the idaplace_t class template instead.
+        if hasattr(ida_kernwin, "ea2place"):
+            place = ida_kernwin.ea2place(ea)
+        else:
+            place_id = ida_kernwin.get_place_class_id("idaplace_t")
+            template = ida_kernwin.get_place_class_template(place_id) if place_id >= 0 else None
+            if template is None:
+                return {"error": "idaplace_t place class unavailable", "address": hex_addr(ea)}
+            place = template.clone()
+            ida_place = ida_kernwin.place_t.as_idaplace_t(place)
+            if ida_place is None:
+                return {"error": "cannot create an ea-capable place", "address": hex_addr(ea)}
+            ida_place.ea = ea
 
+        entry = ida_moves.lochist_entry_t()
+        entry.set_place(place)
+
+        # bookmarks_t.get() does not populate entries reliably without widget
+        # user data; probe occupancy via get_desc() instead.
         slot = None
         for i in range(1024):
             try:
-                probe = ida_moves.lochist_entry_t()
-                if not ida_moves.bookmarks_t.get(probe, i, None) or not probe.is_valid():
+                if ida_moves.bookmarks_t.get_desc(entry, i, None) is None:
                     slot = i
                     break
             except Exception:

@@ -32,7 +32,7 @@ from . import register_tools
 
 server = FastMCP(
     name="IDA-MCP-Proxy",
-    version="0.8.0",
+    version="0.8.1",
     instructions="""IDA MCP 代理 - 通过网关访问多个 IDA 实例。
 
 多实例时用 list_instances 查看实例，用 select_instance 或工具参数 port 指定目标；
