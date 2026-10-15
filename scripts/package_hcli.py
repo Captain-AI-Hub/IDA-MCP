@@ -65,12 +65,72 @@ def _iter_package_files() -> list[tuple[Path, PurePosixPath]]:
     return sorted(files, key=lambda item: item[1].as_posix())
 
 
+def _local_machine_defaults() -> dict[str, str]:
+    """Best-effort local detection so install prompts come pre-filled.
+
+    Reads <IDAUSR>/ida-config.json for the install dir, then derives the IDA
+    executable and the ida-python runtime. Returns {} on CI/unknown machines,
+    leaving the packaged manifest untouched.
+    """
+    import os
+
+    idausr = os.environ.get("IDAUSR", "").strip()
+    user_root = Path(idausr.split(os.pathsep)[0]).expanduser() if idausr else (
+        Path(os.environ.get("APPDATA", "")) / "Hex-Rays" / "IDA Pro"
+        if os.name == "nt" and os.environ.get("APPDATA")
+        else Path.home() / ".idapro"
+    )
+    try:
+        document = json.loads((user_root / "ida-config.json").read_text(encoding="utf-8"))
+        install_dir = Path(
+            ((document.get("Paths") or {}).get("ida-install-dir") or "").strip()
+        )
+    except (OSError, ValueError):
+        return {}
+    if not install_dir.is_dir():
+        return {}
+
+    defaults: dict[str, str] = {}
+    exe_name = "ida.exe" if os.name == "nt" else "ida"
+    if (install_dir / exe_name).is_file():
+        defaults["ida_path"] = str(install_dir / exe_name)
+    bin_dir = install_dir / "ida-python" / "bin"
+    if bin_dir.is_dir():
+        versioned = sorted(bin_dir.glob("python3.*"), reverse=True)
+        python = versioned[0] if versioned else (bin_dir / "python3" if (bin_dir / "python3").is_file() else None)
+        if python is None and os.name == "nt" and (install_dir / "ida-python" / "python.exe").is_file():
+            python = install_dir / "ida-python" / "python.exe"
+        if python is not None:
+            defaults["ida_python"] = str(python)
+    return defaults
+
+
+def _personalize_manifest_bytes(data: bytes) -> bytes:
+    """Fill settings defaults with locally detected paths (no-op on CI)."""
+    defaults = _local_machine_defaults()
+    if not defaults:
+        return data
+    manifest = json.loads(data.decode("utf-8"))
+    changed = False
+    for item in manifest.get("plugin", {}).get("settings", []):
+        value = defaults.get(item.get("key", ""))
+        if value and item.get("default", "") in ("", "auto"):
+            item["default"] = value
+            changed = True
+    if not changed:
+        return data
+    return (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+
+
 def _write_member(zf: zipfile.ZipFile, source: Path, archive_name: PurePosixPath) -> None:
     info = zipfile.ZipInfo(archive_name.as_posix(), FIXED_TIMESTAMP)
     info.compress_type = zipfile.ZIP_DEFLATED
     info.create_system = 3
     info.external_attr = 0o100644 << 16
-    zf.writestr(info, source.read_bytes(), compresslevel=9)
+    data = source.read_bytes()
+    if archive_name.as_posix() == "ida-plugin.json":
+        data = _personalize_manifest_bytes(data)
+    zf.writestr(info, data, compresslevel=9)
 
 
 def build_archive(output: Path) -> tuple[dict, int, str]:

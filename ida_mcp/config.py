@@ -16,8 +16,7 @@ MCP server (standalone process):
 
 IDA / headless launch:
     - ida_path: IDA executable (GUI launches)
-    - ida_python: IDAPython interpreter (dependency installs)
-    - idalib_python: Python with idalib activated (headless workers)
+    - ida_python: IDA's Python runtime; also drives headless idalib workers
 
 General:
     - request_timeout: request timeout in seconds (default 30)
@@ -42,7 +41,6 @@ _DEFAULT_CONFIG = {
     # IDA / headless launch
     "ida_path": None,  # IDA executable path
     "ida_python": None,  # IDA Python executable path
-    "idalib_python": None,  # Python with idalib activated (headless workers)
     # general
     "request_timeout": 30,
     "debug": False,
@@ -53,7 +51,6 @@ _DEFAULT_CONFIG = {
 _HCLI_SETTING_KEYS = (
     "ida_path",
     "ida_python",
-    "idalib_python",
     "request_timeout",
     "debug",
 )
@@ -301,7 +298,9 @@ def initialize_runtime_settings() -> Dict[str, Any]:
         detected = _detect_running_ida_python()
         if detected:
             python_value = detected
-            if _write_config_string(_CONFIG_FILE, "ida_python", detected):
+            # Cache into the USER config; the packaged config.conf stays
+            # pristine (wheel installs are read-only).
+            if persist_user_setting("ida_python", detected):
                 result["ida_python_detected"] = True
     result["ida_python"] = python_value or None
 
@@ -398,18 +397,6 @@ def get_ida_python() -> str | None:
     """Get the IDA Python executable path."""
     config = load_config()
     path = config.get("ida_python")
-
-    if isinstance(path, str):
-        path = path.strip()
-        if path and path.lower() not in _AUTO_PYTHON_SENTINELS:
-            return path
-    return None
-
-
-def get_idalib_python() -> str | None:
-    """Get the Python interpreter with idalib activated (headless workers)."""
-    config = load_config()
-    path = config.get("idalib_python")
 
     if isinstance(path, str):
         path = path.strip()

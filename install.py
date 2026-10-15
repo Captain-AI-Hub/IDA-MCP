@@ -114,13 +114,13 @@ def _persist_detections(args) -> None:
                 break
     if ida_executable:
         persist_user_setting("ida_path", ida_executable)
-    idalib = resolve_idalib_python()
-    if idalib:
-        print(f"Detected idalib Python (headless workers): {idalib}")
+    worker_python = resolve_idalib_python()
+    if worker_python:
+        print(f"IDA Python (also used by headless workers): {worker_python}")
     else:
         print(
-            "No idalib-activated Python detected; headless open_database will "
-            "retry and explain how to activate one when needed."
+            "IDA Python could not 'import idapro' yet; headless open_database "
+            "will explain how to install the idalib bindings when needed."
         )
 
 

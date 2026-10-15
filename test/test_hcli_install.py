@@ -190,9 +190,8 @@ def test_manifest_prompts_for_idapython_and_auto_start_defaults_on():
     assert "enable_unsafe" not in settings
     assert settings["ida_python"]["default"] == "auto"
     assert settings["ida_python"]["prompt"] is True
-    assert settings["idalib_python"]["prompt"] is True
     for removed in ("auto_start", "open_in_ida_autonomous", "instance_host",
-                    "instance_port", "launch_bundle_dir"):
+                    "instance_port", "launch_bundle_dir", "idalib_python"):
         assert removed not in settings, removed
     # Zero in-IDA dependencies: the bridge is stdlib-only.
     assert manifest["plugin"]["pythonDependencies"] == []

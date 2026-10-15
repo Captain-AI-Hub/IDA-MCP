@@ -45,16 +45,7 @@
         "required": false,
         "default": "auto",
         "name": "IDAPython interpreter path",
-        "documentation": "Python executable used by this IDA installation; auto resolves it from the running IDA process on first launch.",
-        "prompt": true
-      },
-      {
-        "key": "idalib_python",
-        "type": "string",
-        "required": false,
-        "default": "",
-        "name": "idalib Python (headless workers)",
-        "documentation": "Python with the official idalib bindings activated (idapro importable). Used by headless open_database workers; auto-detected from ida_python when empty.",
+        "documentation": "Python runtime used by this IDA installation; it also drives headless idalib workers. auto resolves it from the running IDA process on first launch.",
         "prompt": true
       },
       {

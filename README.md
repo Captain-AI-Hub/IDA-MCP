@@ -100,9 +100,10 @@ idamcp-hub config show
 ## 配置
 
 `ida_mcp/config.conf`（包内）与 `~/.idapro/ida-mcp/config.conf`（用户级，优先生效），
-仅 5 个键：`ida_path`（GUI 启动）、`ida_python` / `idalib_python`、`request_timeout`、
-`debug`。前三个路径在 **install.py / hcli_install.py 安装时自动探测**并写入用户级
-配置（首启时也会兜底重探测），日常无需手工配置。
+仅 4 个键：`ida_path`（GUI 启动）、`ida_python`（IDAPython 运行时，无头 idalib
+worker 也用它——正常就是同一个解释器）、`request_timeout`、`debug`。两个路径在
+**install.py / hcli_install.py / package_hcli.py（本地打 zip 时写入提示默认值）安装
+时自动探测**并缓存到用户级配置（首启时也会兜底重探测），日常无需手工配置。
 实例桥固定 `127.0.0.1:13337+` 且插件自动启动，无需配置。
 环境变量覆盖：`IDA_MCP_CONFIG_<KEY>`。
 

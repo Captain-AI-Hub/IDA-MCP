@@ -97,8 +97,7 @@ idalib worker 中调用进入主线程队列串行执行（SDK 仅允许主线�
 | `instance_token` | "" | 非回环监听必填 |
 | `auto_start` | true | 数据库打开后自动启动桥 |
 | `ida_path` | "" | GUI 启动用 IDA 可执行文件 |
-| `ida_python` | "" | IDAPython 解释器（自动检测） |
-| `idalib_python` | "" | 无头 worker 解释器（自动探测并缓存） |
+| `ida_python` | "" | IDAPython 运行时，兼作无头 idalib worker 解释器（自动检测） |
 | `request_timeout` / `debug` | 30 / false | 通用 |
 
 桥监听（127.0.0.1:13337+）、插件自动启动与 GUI 启动的 `-A` 均为固定行为，

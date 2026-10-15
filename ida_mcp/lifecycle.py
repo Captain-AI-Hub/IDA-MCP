@@ -27,7 +27,6 @@ from .bridge_server import BRIDGE_PORT_BASE
 from .config import (
     get_ida_path,
     get_ida_python,
-    get_idalib_python,
     get_request_timeout,
 )
 
@@ -187,18 +186,15 @@ def _install_dir_python_candidates(install_dir: str) -> List[str]:
 
 
 def resolve_idalib_python(persist: bool = True) -> Optional[str]:
-    """Find a Python interpreter with the official idalib bindings active.
+    """Find the Python interpreter for headless idalib workers.
 
-    Probes, in order: configured idalib_python, configured/detected
-    ida_python, the IDA installation's own ida-python runtime (discovered
-    from ida-config.json), a managed activation venv, and the legacy
-    ~/.idapro/venv. Successful late detections are cached into the
-    user-scope config so later launches skip probing.
+    Normally this is simply ida_python (one runtime for both roles). Probes,
+    in order: configured/detected ida_python, the IDA installation's own
+    ida-python runtime (discovered from ida-config.json), a managed
+    activation venv, and the legacy ~/.idapro/venv. A successful late
+    detection is cached as ida_python in the user-scope config.
     """
     candidates: List[str] = []
-    configured = get_idalib_python()
-    if configured:
-        candidates.append(configured)
     ida_python = get_ida_python()
     if ida_python:
         candidates.append(ida_python)
@@ -219,10 +215,11 @@ def resolve_idalib_python(persist: bool = True) -> Optional[str]:
             continue
         seen.add(normalized)
         if _python_can_idalib(candidate):
-            if persist and candidate not in (configured, ida_python):
+            if persist and candidate != ida_python:
                 from .config import persist_user_setting
 
-                persist_user_setting("idalib_python", os.path.abspath(candidate))
+                # One runtime for both roles: cache it as ida_python.
+                persist_user_setting("ida_python", os.path.abspath(candidate))
             return candidate
     return None
 
@@ -263,10 +260,10 @@ def launch_headless(target_path: str, *, timeout: float = OPEN_TIMEOUT_SECONDS) 
     if not idalib_python:
         return {
             "error": (
-                "No Python with idalib activated was found. Install the idapro "
-                "wheel from <IDA>/idalib/python into your IDA Python (or run "
-                "`python py-activate-idalib.py` from the IDA install dir), or "
-                "set 'idalib_python' in config.conf."
+                "IDA's Python cannot 'import idapro' yet. Install the idalib "
+                "bindings into it (pip install <IDA>/idalib/python/idapro-*.whl "
+                f"&& python <IDA>/py-activate-idalib.py, using the interpreter "
+                "configured as 'ida_python'), then retry."
             )
         }
 

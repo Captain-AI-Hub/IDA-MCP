@@ -45,12 +45,13 @@ def test_hcli_settings_beat_env(monkeypatch):
 
 
 def test_accessors(tmp_path):
-    with patch.object(config, "_user_config_file", return_value=str(tmp_path / "none.conf")):
-        with patch.object(config, "_hcli_setting_overrides", return_value={}):
-            assert config.get_ida_path() is None
-        assert config.get_idalib_python() is None
-        assert config.get_request_timeout() == 30
-        assert config.is_debug_enabled() is False
+    with patch.object(config, "_CONFIG_FILE", str(tmp_path / "packaged.conf")):
+        with patch.object(config, "_user_config_file", return_value=str(tmp_path / "user.conf")):
+            with patch.object(config, "_hcli_setting_overrides", return_value={}):
+                assert config.get_ida_path() is None
+                assert config.get_ida_python() is None
+                assert config.get_request_timeout() == 30
+                assert config.is_debug_enabled() is False
     # Removed layers stay removed: http transport, gateway token, unsafe
     # gating, WSL bridge, and the bridge host/port/token/auto_start knobs.
     for name in (
@@ -66,6 +67,7 @@ def test_accessors(tmp_path):
         "is_open_in_ida_autonomous_enabled",
         "get_server_name",
         "get_launch_bundle_dir",
+        "get_idalib_python",
     ):
         assert not hasattr(config, name), name
 
