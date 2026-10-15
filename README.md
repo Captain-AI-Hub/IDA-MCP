@@ -6,7 +6,7 @@ IDA Pro 的 MCP（Model Context Protocol）服务器：**stdio 传输**、无头
 的反汇编/反编译/修改/调试全量 API（93 个工具）。
 
 ```text
-MCP 客户端 ──stdio──▶ idamcp 独立进程
+MCP 客户端 ──stdio──▶ idamcp-hub 独立进程
                         │  ├─ 实例发现：<IDAUSR>/ida-mcp/instances.json
                         │  └─ 直连各 IDA 进程内的 JSON-RPC 桥（无网关、无端口注册转发）
                         ▼
@@ -15,7 +15,7 @@ MCP 客户端 ──stdio──▶ idamcp 独立进程
 
 ## 核心特性
 
-- **stdio 唯一传输**（`uvx idamcp stdio`）。HTTP/网关/端口注册转发机制已删除。
+- **stdio 唯一传输**（`uvx idamcp-hub stdio`）。HTTP/网关/端口注册转发机制已删除。
 - **open_database**：附加已打开的 GUI 实例，或启动**无头 idalib worker**（自动创建并分析
   .i64），或显式 `headless="gui"` 拉起 GUI。
 - **多实例**：`list_databases / select_database / save_database / close_database`，
@@ -42,32 +42,25 @@ hcli plugin install https://github.com/Captain-AI-Hub/IDA-MCP/releases/latest/do
 
 ```bash
 # 无需克隆，直接从 GitHub 运行（也可换成任意 ref / 本地路径）：
-uvx --from git+https://github.com/Captain-AI-Hub/IDA-MCP idamcp stdio
-# 发布到 PyPI 后的简写：
-uvx idamcp stdio
+uvx idamcp-hub stdio
+# 指定仓库/分支（未发布新版时）：
+uvx --from git+https://github.com/Captain-AI-Hub/IDA-MCP idamcp-hub stdio
 # 或从源码：
 python -m ida_mcp stdio
 ```
 
-发布到 PyPI 后，客户端配置简化为：
+PyPI 包名 **`idamcp-hub`**（`idamcp` 与官方 `ida-mcp` 过于相似被 PyPI 拒绝），
+已发布，`uvx idamcp-hub stdio` 即开即用。
 
-```json
-{ "mcpServers": { "ida-mcp": { "command": "uvx", "args": ["idamcp", "stdio"] } } }
-```
-
-**发布方式**：`uv build` 产出 wheel/sdist，`uv publish`（或推送 `v*` tag 触发
-`.github/workflows/pypi-publish.yml`，支持 PyPI trusted publisher / API token）。
-包名 `idamcp`，发布后 `uvx idamcp stdio` 即开即用。
+**发布方式**：推送 `v*` tag 触发 `.github/workflows/pypi-publish.yml`
+（优先用仓库 secret `PYPI_API_TOKEN`，未设置时走 trusted publisher）。
 
 MCP 客户端配置（HCLI/安装器安装完成后打印同款，可直接复制）：
 
 ```json
 {
   "mcpServers": {
-    "ida-mcp": {
-      "command": "uvx",
-      "args": ["--from", "git+https://github.com/Captain-AI-Hub/IDA-MCP", "idamcp", "stdio"]
-    }
+    "ida-mcp": { "command": "uvx", "args": ["idamcp-hub", "stdio"] }
   }
 }
 ```
@@ -95,14 +88,14 @@ MCP 客户端配置（HCLI/安装器安装完成后打印同款，可直接复�
 ## CLI
 
 ```bash
-idamcp                      # = idamcp stdio
-idamcp instances list       # 列出活跃实例（GUI + 无头）
-idamcp open <path> [--gui]  # 附加或无头打开（自动创建/分析 .i64）
-idamcp close [--id ID] [--terminate]
-idamcp save [--id ID]
-idamcp tool call <name> --params '{"addr":"main"}'
-idamcp reference "decompile function" [--module ida_funcs]
-idamcp config show
+idamcp-hub                  # = idamcp-hub stdio
+idamcp-hub instances list       # 列出活跃实例（GUI + 无头）
+idamcp-hub open <path> [--gui]  # 附加或无头打开（自动创建/分析 .i64）
+idamcp-hub close [--id ID] [--terminate]
+idamcp-hub save [--id ID]
+idamcp-hub tool call <name> --params '{"addr":"main"}'
+idamcp-hub reference "decompile function" [--module ida_funcs]
+idamcp-hub config show
 ```
 
 ## 配置

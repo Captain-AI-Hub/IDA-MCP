@@ -3,8 +3,7 @@
 
 Default action serves MCP over stdio (the only transport).::
 
-    idamcp                # serve MCP over stdio
-    idamcp stdio          # same, explicit
+    idamcp-hub            # serve MCP over stdio
 
 Instance operations::
 
@@ -212,7 +211,7 @@ def _cmd_config_show(_args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="idamcp",
+        prog="idamcp-hub",
         description="IDA-MCP: stdio MCP server + instance CLI",
     )
     subparsers = parser.add_subparsers(dest="command")

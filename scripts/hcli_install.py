@@ -265,15 +265,7 @@ def personalize_archive(
 def mcp_client_config() -> dict[str, object]:
     return {
         "mcpServers": {
-            "ida-mcp": {
-                "command": "uvx",
-                "args": [
-                    "--from",
-                    "git+https://github.com/Captain-AI-Hub/IDA-MCP",
-                    "idamcp",
-                    "stdio",
-                ],
-            }
+            "ida-mcp": {"command": "uvx", "args": ["idamcp-hub", "stdio"]}
         }
     }
 

@@ -156,9 +156,7 @@ def test_mcp_client_config_is_stdio():
     value = hcli_install.mcp_client_config()
 
     server = value["mcpServers"]["ida-mcp"]
-    assert server["command"] == "uvx"
-    assert server["args"][-2:] == ["idamcp", "stdio"]
-    assert "--from" in server["args"]  # works before PyPI publish
+    assert server == {"command": "uvx", "args": ["idamcp-hub", "stdio"]}
 
 
 def test_reads_selected_ida_from_hcli_config(tmp_path, monkeypatch):

@@ -130,15 +130,7 @@ def _print_client_config() -> None:
         json.dumps(
             {
                 "mcpServers": {
-                    "ida-mcp": {
-                        "command": "uvx",
-                        "args": [
-                            "--from",
-                            "git+https://github.com/Captain-AI-Hub/IDA-MCP",
-                            "idamcp",
-                            "stdio",
-                        ],
-                    }
+                    "ida-mcp": {"command": "uvx", "args": ["idamcp-hub", "stdio"]}
                 }
             },
             indent=2,

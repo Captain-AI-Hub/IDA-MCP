@@ -29,6 +29,10 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
-        # Configure one of:
-        #   - PyPI trusted publisher for this repository (recommended, no secret), or
-        #   - PYPI_API_TOKEN repository secret.
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          skip-existing: true
+        # Uses the PYPI_API_TOKEN secret when set; otherwise falls back to
+        # trusted publishing (register owner=Captain-AI-Hub, repo=IDA-MCP,
+        # workflow pypi-publish.yml, project idamcp-hub). skip-existing keeps
+        # re-runs of the same tag green.
