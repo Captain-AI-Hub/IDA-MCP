@@ -85,13 +85,14 @@ class TestDisasm:
         assert isinstance(result, list)
         assert len(result) == 1
         if "error" not in result[0]:
-            assert "instructions" in result[0]
-            assert len(result[0]["instructions"]) > 0
-            inst = result[0]["instructions"][0]
-            # addresses are hex strings and text has no IDA color tags
-            assert isinstance(inst["ea"], str) and inst["ea"].startswith("0x")
-            assert "\x01" not in inst["text"] and "\x02" not in inst["text"]
-            assert "bytes" not in inst
+            assert "disasm" in result[0]
+            assert result[0]["count"] > 0
+            body = result[0]["disasm"]
+            first_line = body.splitlines()[0]
+            assert first_line.startswith("0x")
+            assert "  " in first_line  # addr<SP><SP>instruction
+            # no IDA color tags
+            assert "\x01" not in body and "\x02" not in body
 
     def test_disasm_by_name(self, tool_caller, first_function_name):
         """Test disassembly by name."""
@@ -131,8 +132,9 @@ class TestLinearDisasm:
         })
 
         if "error" not in result:
-            assert "instructions" in result
-            assert len(result["instructions"]) <= 10
+            assert "disasm" in result
+            assert result["count"] <= 10
+            assert result["disasm"].splitlines()[0].startswith("0x")
 
     def test_linear_disasm_more(self, tool_caller, first_function_address):
         """Test linear disassembly with more instructions."""
@@ -142,11 +144,8 @@ class TestLinearDisasm:
         })
 
         if "error" not in result:
-            assert "instructions" in result
-            # Verify instruction format
-            if result["instructions"]:
-                inst = result["instructions"][0]
-                assert "ea" in inst  # API returns ea
+            assert "disasm" in result
+            assert result["disasm"].splitlines()[0].startswith("0x")
 
     def test_linear_disasm_invalid_count(self, tool_caller, first_function_address):
         """Test invalid count."""
@@ -383,15 +382,13 @@ class TestBasicBlocks:
 
         if "error" not in result:
             assert "blocks" in result
-            assert "total" in result
-            assert isinstance(result["blocks"], list)
+            assert "count" in result
+            assert isinstance(result["blocks"], str)
 
-            if result["blocks"]:
-                block = result["blocks"][0]
-                assert "start_ea" in block
-                assert "end_ea" in block
-                assert "predecessors" in block
-                assert "successors" in block
+            if result["count"]:
+                first = result["blocks"].splitlines()[0]
+                assert first.startswith("0x")
+                assert "-" in first  # start-end (-> succs)
 
     def test_get_basic_blocks_by_name(self, tool_caller, first_function_name):
         """Test getting basic blocks by function name."""
@@ -402,9 +399,9 @@ class TestBasicBlocks:
         result = tool_caller("get_basic_blocks", {"addr": "ida_mcp_complex_dispatch"})
         assert isinstance(result, dict)
         assert "error" not in result
-        assert result["total"] == complex_baseline["functions"]["ida_mcp_complex_dispatch"]["basic_block_count"]
-        assert any(block["successors"] for block in result["blocks"])
-        assert any(block["predecessors"] for block in result["blocks"])
+        assert result["count"] == complex_baseline["functions"]["ida_mcp_complex_dispatch"]["basic_block_count"]
+        # successors appear as "start-end -> succ1, succ2" lines
+        assert any(" -> " in line for line in result["blocks"].splitlines())
 
     def test_get_basic_blocks_not_found(self, tool_caller):
         """Test nonexistent function."""

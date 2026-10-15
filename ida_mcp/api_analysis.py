@@ -366,21 +366,19 @@ def _disasm_single(query: str) -> dict:
             except Exception:
                 pass
             
-            insn: Dict[str, Any] = {
-                'ea': hex_addr(head_ea),
-                'text': text,
-            }
+            line = f"{hex_addr(head_ea)}  {text}"
             if cmt_parts:
-                insn['comment'] = ' // '.join(cmt_parts)
-            instructions.append(insn)
+                line += f"  // {' // '.join(cmt_parts)}"
+            instructions.append(line)
         except Exception:
             continue
-    
+
     return {
         'name': info["name"],
         'start_ea': hex_addr(start),
         'end_ea': hex_addr(end),
-        'instructions': instructions,
+        'count': len(instructions),
+        'disasm': "\n".join(instructions),
     }
 
 
@@ -439,11 +437,8 @@ def linear_disasm(
                 break
             
             text = _listing_text(ea) or '?'
-            
-            collected.append({
-                'ea': hex_addr(ea),
-                'text': text,
-            })
+
+            collected.append(f"{hex_addr(ea)}  {text}")
             ea += size
         except Exception:
             if not collected:
@@ -455,11 +450,12 @@ def linear_disasm(
     
     result: dict = {
         'start_address': hex_addr(addr_int),
-        'instructions': collected,
+        'count': len(collected),
+        'disasm': "\n".join(collected),
     }
     if len(collected) >= count:
         result['truncated'] = True
-    
+
     return result
 
 
@@ -1027,56 +1023,40 @@ def _basic_blocks_single(addr: Union[int, str]) -> dict:
     if info.get("error"):
         return info
 
-    blocks: List[dict] = []
+    blocks: List[str] = []
 
     try:
         # use FlowChart to get basic blocks
         fc = ida_gdl.FlowChart(bounds=(info["start_ea"], info["end_ea"]))
-        
+
         for block in fc:
-            block_info: dict = {
-                "start_ea": hex_addr(block.start_ea),
-                "end_ea": hex_addr(block.end_ea),
-                "size": block.end_ea - block.start_ea,
-            }
-            
-            # get predecessors
-            preds: List[str] = []
-            try:
-                for pred in block.preds():  # type: ignore[attr-defined]
-                    preds.append(hex_addr(pred.start_ea))
-            except Exception:
-                pass
-            block_info["predecessors"] = preds
-            
-            # get successors
             succs: List[str] = []
             try:
                 for succ in block.succs():  # type: ignore[attr-defined]
                     succs.append(hex_addr(succ.start_ea))
             except Exception:
                 pass
-            block_info["successors"] = succs
-            
-            # block type
+            line = f"{hex_addr(block.start_ea)}-{hex_addr(block.end_ea)}"
+            if succs:
+                line += f" -> {', '.join(succs)}"
             try:
-                block_info["type"] = block.type
+                if block.type:
+                    line += f"  [type={block.type}]"
             except Exception:
                 pass
-            
-            blocks.append(block_info)
+            blocks.append(line)
     except Exception as e:
         return {"error": f"failed to get basic blocks: {e}", "query": addr}
-    
+
     # sort by start address
-    blocks.sort(key=lambda x: int(x['start_ea'], 16))
+    blocks.sort()
     
     return {
         "function": info["name"],
         "start_ea": hex_addr(info["start_ea"]),
         "end_ea": hex_addr(info["end_ea"]),
-        "total": len(blocks),
-        "blocks": blocks,
+        "count": len(blocks),
+        "blocks": "\n".join(blocks),
     }
 
 
@@ -1287,8 +1267,8 @@ def callgraph(
     max_nodes: Annotated[int, "Maximum functions to include"] = 1000,
 ) -> dict:
     """Build a call graph by walking call references from the root function(s)."""
-    nodes: Dict[int, dict] = {}
-    edges: List[dict] = []
+    nodes: Dict[int, tuple] = {}  # ea -> (depth, name)
+    edges: List[str] = []
     seen_edges = set()
     errors: List[dict] = []
     queue: deque = deque()
@@ -1310,11 +1290,7 @@ def callgraph(
         if len(nodes) >= max(1, max_nodes):
             truncated = True
             break
-        nodes[start_ea] = {
-            "ea": hex_addr(start_ea),
-            "name": _function_name_at(start_ea),
-            "depth": depth,
-        }
+        nodes[start_ea] = (depth, _function_name_at(start_ea))
         if depth >= max_depth:
             continue
         try:
@@ -1336,17 +1312,25 @@ def callgraph(
                 key = (start_ea, callee)
                 if key not in seen_edges:
                     seen_edges.add(key)
-                    edges.append({
-                        "caller": hex_addr(start_ea),
-                        "callee": hex_addr(callee),
-                    })
+                    caller_name = nodes.get(start_ea, (0, ""))[1]
+                    callee_name = _function_name_at(callee)
+                    edges.append(
+                        f"{caller_name or hex_addr(start_ea)} -> "
+                        f"{callee_name or hex_addr(callee)}"
+                    )
                 if callee not in nodes:
                     queue.append((callee, depth + 1))
 
+    node_lines = [
+        f"{'  ' * depth}{name or hex_addr(ea)}@{hex_addr(ea)}"
+        for ea, (depth, name) in sorted(nodes.items(), key=lambda item: item[1][0])
+    ]
     result: Dict[str, Any] = {
         "roots": root_names,
-        "nodes": sorted(nodes.values(), key=lambda item: (item["depth"], item["ea"])),
-        "edges": edges,
+        "node_count": len(node_lines),
+        "nodes": "\n".join(node_lines),
+        "edge_count": len(edges),
+        "edges": "\n".join(edges),
     }
     if truncated:
         result["truncated"] = True
@@ -1379,8 +1363,8 @@ def trace_data_flow(
     if direction_norm not in {"to", "from", "both"}:
         return {"error": f"invalid direction: {direction}", "expected": "to|from|both"}
 
-    nodes: Dict[int, dict] = {}
-    edges: List[dict] = []
+    nodes: Dict[int, tuple] = {}  # ea -> (depth, name)
+    edges: List[str] = []
     seen_edges = set()
     queue: deque = deque([(int(start), 0)])
     truncated = False
