@@ -257,6 +257,10 @@ def _wait_for_instance(
 def launch_headless(target_path: str, *, timeout: float = OPEN_TIMEOUT_SECONDS) -> Dict[str, Any]:
     """Spawn an idalib worker; it creates/analyzes the .i64 and self-registers."""
     idalib_python = resolve_idalib_python()
+    if idalib_python:
+        # Surface which interpreter drives headless workers (stderr keeps
+        # stdio MCP transport clean).
+        print(f"[IDA-MCP] headless worker python: {idalib_python}", file=sys.stderr)
     if not idalib_python:
         return {
             "error": (
@@ -312,7 +316,12 @@ def launch_headless(target_path: str, *, timeout: float = OPEN_TIMEOUT_SECONDS) 
             "spawned_at": time.time(),
             "process": proc,
         }
-    return {"status": "ok", "mode": "headless", "instance": entry}
+    return {
+        "status": "ok",
+        "mode": "headless",
+        "instance": entry,
+        "worker_python": idalib_python,
+    }
 
 
 def launch_gui(

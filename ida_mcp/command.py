@@ -120,6 +120,8 @@ def _cmd_open(args: argparse.Namespace) -> int:
     )
     print(f"input: {instance.get('input_file')}")
     print(f"database: {instance.get('database_path')}")
+    if result.get("worker_python"):
+        print(f"worker python: {result['worker_python']}")
     return EXIT_OK
 
 

@@ -247,7 +247,15 @@ def _write_config_string(path: str, key: str, value: str) -> bool:
 
 def _detect_running_ida_python() -> str | None:
     """Resolve the Python executable backing the current IDAPython runtime."""
+    # Exact running version first (e.g. bin/python3.12); generic names and
+    # the odd prefix-root "python" come last.
+    versioned = f"python{sys.version_info.major}.{sys.version_info.minor}"
+
+    executable = getattr(sys, "executable", "")
     candidates: list[str] = []
+    if executable and os.path.basename(executable).lower().startswith("python"):
+        candidates.append(executable)
+
     for prefix in (
         getattr(sys, "exec_prefix", None),
         getattr(sys, "base_prefix", None),
@@ -260,16 +268,14 @@ def _detect_running_ida_python() -> str | None:
         else:
             candidates.extend(
                 [
+                    os.path.join(prefix, "bin", versioned),
                     os.path.join(prefix, "bin", "python3"),
                     os.path.join(prefix, "bin", "python"),
+                    os.path.join(prefix, versioned),
                     os.path.join(prefix, "python3"),
                     os.path.join(prefix, "python"),
                 ]
             )
-
-    executable = getattr(sys, "executable", "")
-    if executable and os.path.basename(executable).lower().startswith("python"):
-        candidates.append(executable)
 
     seen: set[str] = set()
     for candidate in candidates:
