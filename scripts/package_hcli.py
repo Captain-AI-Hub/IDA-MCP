@@ -96,7 +96,11 @@ def _local_machine_defaults() -> dict[str, str]:
         defaults["ida_path"] = str(install_dir / exe_name)
     bin_dir = install_dir / "ida-python" / "bin"
     if bin_dir.is_dir():
-        versioned = sorted(bin_dir.glob("python3.*"), reverse=True)
+        versioned = [
+            p for p in bin_dir.glob("python3.*")
+            if p.is_file() and "-" not in p.name
+        ]
+        versioned.sort(reverse=True)
         python = versioned[0] if versioned else (bin_dir / "python3" if (bin_dir / "python3").is_file() else None)
         if python is None and os.name == "nt" and (install_dir / "ida-python" / "python.exe").is_file():
             python = install_dir / "ida-python" / "python.exe"
