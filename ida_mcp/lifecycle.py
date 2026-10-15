@@ -282,6 +282,14 @@ def launch_headless(target_path: str, *, timeout: float = OPEN_TIMEOUT_SECONDS) 
     log_path = instances.get_state_dir() / f"worker-{os.getpid()}-{int(time.time())}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     try:
+        old_logs = sorted(
+            log_path.parent.glob("worker-*.log"), key=lambda pth: pth.stat().st_mtime
+        )
+        for stale in old_logs[:-10]:
+            stale.unlink(missing_ok=True)
+    except OSError:
+        pass
+    try:
         log_handle = open(log_path, "w", encoding="utf-8", errors="replace")
         proc = subprocess.Popen(
             [
