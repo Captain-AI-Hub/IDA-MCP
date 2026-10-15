@@ -222,9 +222,14 @@ def parse_idapyswitch_output(output: str, *, windows: bool) -> list[dict[str, st
     return results
 
 
+def _is_windows() -> bool:
+    """Platform switch; tests patch this instead of faking os.name."""
+    return os.name == "nt"
+
+
 def default_ida_user_dir() -> Path:
     """Platform default IDA user dir: %APPDATA%/Hex-Rays/IDA Pro on Windows."""
-    if os.name == "nt":
+    if _is_windows():
         appdata = os.environ.get("APPDATA", "").strip()
         if appdata:
             return Path(appdata) / "Hex-Rays" / "IDA Pro"

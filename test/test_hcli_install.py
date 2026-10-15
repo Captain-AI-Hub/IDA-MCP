@@ -189,7 +189,10 @@ def test_reads_selected_ida_from_windows_appdata_default(tmp_path, monkeypatch):
         json.dumps({"Paths": {"ida-install-dir": str(ida_dir)}}),
         encoding="utf-8",
     )
-    monkeypatch.setattr(hcli_install.os, "name", "nt")
+    import ida_python_detection
+
+    monkeypatch.setattr(ida_python_detection, "_is_windows", lambda: True)
+    monkeypatch.setattr(hcli_install, "_is_windows", lambda: True)
     monkeypatch.setenv("APPDATA", str(appdata))
     monkeypatch.delenv("HCLI_IDAUSR", raising=False)
     monkeypatch.delenv("IDAUSR", raising=False)

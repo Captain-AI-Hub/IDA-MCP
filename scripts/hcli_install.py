@@ -18,6 +18,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from ida_python_detection import default_ida_user_dir as _default_ida_user_dir
+from ida_python_detection import _is_windows
 from ida_python_detection import detect_ida_python as _detect_ida_python
 from ida_python_detection import parse_idapyswitch_output as _parse_idapyswitch_output
 from package_hcli import ROOT, build_archive
@@ -28,16 +29,16 @@ if str(ROOT) not in sys.path:
 
 
 def _ida_executable_name() -> str:
-    return "ida.exe" if os.name == "nt" else "ida"
+    return "ida.exe" if _is_windows() else "ida"
 
 
 def _normalize_ida_executable(value: str | Path) -> Path:
     path = Path(value).expanduser()
     if path.is_dir():
         if sys.platform == "darwin" and path.suffix == ".app":
-            path = path / "Contents" / "MacOS" / "ida"
+            path = Path(str(path) + "/Contents/MacOS/ida")
         else:
-            names = ("ida.exe", "ida64.exe") if os.name == "nt" else ("ida", "ida64")
+            names = ("ida.exe", "ida64.exe") if _is_windows() else ("ida", "ida64")
             path = next((path / name for name in names if (path / name).is_file()), path / names[0])
     return path.resolve()
 
