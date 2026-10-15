@@ -18,7 +18,7 @@ MCP 客户端 ──stdio──▶ idamcp-hub 独立进程
 - **open_database**：附加已打开的 GUI 实例，或启动**无头 idalib worker**（自动创建并分析
   .i64），或显式 `headless="gui"` 拉起 GUI。
 - **多实例**：`list_databases / select_database / save_database / close_database`，
-  官方式 instance_id 语义；无头 worker 随最后一个使用者关闭（默认先保存）。
+  以 instance_id 标识各数据库；无头 worker 随最后一个使用者关闭（默认先保存）。
 - **官方 IDAPython 文档**：`ida_python_reference(query)` 基于当前 IDA 运行时构建
   BM25 索引（约 2 万条 API 签名 + 文档字符串），版本永远匹配。
 - **IDA 进程内零第三方依赖**：桥为纯标准库实现，不再向 IDAPython 安装
@@ -48,8 +48,7 @@ uvx --from git+https://github.com/Captain-AI-Hub/IDA-MCP idamcp-hub stdio
 python -m ida_mcp stdio
 ```
 
-PyPI 包名 **`idamcp-hub`**（`idamcp` 与官方 `ida-mcp` 过于相似被 PyPI 拒绝），
-已发布，`uvx idamcp-hub stdio` 即开即用。
+PyPI 包名 **`idamcp-hub`**，已发布，`uvx idamcp-hub stdio` 即开即用。
 
 **发布方式**：推送 `v*` tag 触发 `.github/workflows/pypi-publish.yml`
 （优先用仓库 secret `PYPI_API_TOKEN`，未设置时走 trusted publisher）。
