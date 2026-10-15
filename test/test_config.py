@@ -84,6 +84,9 @@ def test_persist_user_setting_roundtrip(tmp_path):
 def test_initialize_runtime_settings_detects_python(tmp_path):
     with patch.object(config, "_CONFIG_FILE", str(tmp_path / "none.conf")):
         with patch.object(
+            config, "_user_config_file", return_value=str(tmp_path / "user.conf")
+        ):
+        with patch.object(
             config, "_detect_running_ida_python", return_value="/opt/idapy/bin/python3.12"
         ):
             with patch.object(
