@@ -1,6 +1,6 @@
 [project]
 name = "idamcp-hub"
-version = "0.9.0"
+version = "0.9.1"
 description = "IDA Pro MCP server: stdio by default (http optional), headless idalib workers, and official IDAPython reference."
 readme = "README.md"
 license = "GPL-3.0-only"

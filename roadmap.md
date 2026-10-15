@@ -7,7 +7,7 @@
 - Per-instance stdlib JSON-RPC bridge; shared JSON instance registry; no
   gateway, no port-registration forwarding, no HTTP transport, no `ida://`
   resources (all removed in v0.9).
-- Official-style lifecycle tools: open_database (attach / headless idalib
+- Lifecycle tools: open_database (attach / headless idalib
   worker that creates+analyzes .i64 / GUI launch), list/select/save/close.
 - `ida_python_reference`: BM25 index over the attached runtime's IDAPython
   modules (~21k entries).

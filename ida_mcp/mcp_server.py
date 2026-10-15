@@ -1,6 +1,6 @@
 """Standalone MCP server over stdio (the only transport).
 
-Process model (mirrors the official Hex-Rays ida-mcp):
+Process model:
 
     MCP client ──stdio──▶ this process
                  │
@@ -9,8 +9,8 @@ Process model (mirrors the official Hex-Rays ida-mcp):
                     process (GUI plugin instance or headless idalib worker)
 
 All backend tools from the ``api_*`` catalog are forwarded to the currently
-selected instance; lifecycle tools manage multiple instances the official
-way (open_database / list_databases / save_database / close_database), and
+selected instance; lifecycle tools manage multiple instances
+(open_database / list_databases / save_database / close_database), and
 ``ida_python_reference`` searches the official IDAPython documentation of the
 attached IDA runtime.
 
@@ -33,7 +33,7 @@ from .errors import error_payload
 from .idapython_docs import DocsIndex, format_entries
 from .rpc import ToolSpec, get_tool_specs, text_result_tool
 
-__version__ = "0.9.0"
+__version__ = "0.9.1"
 
 # Backend tools replaced by standalone management tools.
 _MANAGED_TOOL_NAMES = {"check_connection", "list_instances", "close_ida"}

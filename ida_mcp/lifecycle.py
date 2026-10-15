@@ -1,6 +1,6 @@
 """Database lifecycle management for the standalone MCP server.
 
-Implements the official ida-mcp style model on top of the local bridge:
+Implements multi-database lifecycle management on top of the local bridge:
 
 - ``open_database(path)``: attach to a GUI instance that already has the
   file open, or spawn a headless idalib worker (creating and analyzing the
@@ -456,8 +456,7 @@ def close_database(
 ) -> Dict[str, Any]:
     """Detach from an instance; terminate managed/headless ones by default.
 
-    GUI instances stay open unless terminate=true, mirroring the official
-    "databases open in the IDA GUI stay open" semantics.
+    GUI instances stay open unless terminate=true.
     """
     instance_id = instance_entry.get("instance_id")
     pid = instance_entry.get("pid")
