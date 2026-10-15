@@ -222,10 +222,21 @@ def parse_idapyswitch_output(output: str, *, windows: bool) -> list[dict[str, st
     return results
 
 
+def default_ida_user_dir() -> Path:
+    """Platform default IDA user dir: %APPDATA%/Hex-Rays/IDA Pro on Windows."""
+    if os.name == "nt":
+        appdata = os.environ.get("APPDATA", "").strip()
+        if appdata:
+            return Path(appdata) / "Hex-Rays" / "IDA Pro"
+    return Path.home() / ".idapro"
+
+
 def detect_ida_python(ida_executable: Path) -> Path | None:
     """Detect IDA's actual Python, preferring an ``idat`` runtime probe."""
     configured_idausr = os.environ.get("IDAUSR")
-    ida_user_dir = Path(configured_idausr.split(os.pathsep)[0]) if configured_idausr else Path.home() / ".idapro"
+    ida_user_dir = (
+        Path(configured_idausr.split(os.pathsep)[0]) if configured_idausr else default_ida_user_dir()
+    )
     if not ida_user_dir.is_dir():
         ida_user_dir = None
 

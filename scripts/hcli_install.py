@@ -17,6 +17,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+from ida_python_detection import default_ida_user_dir as _default_ida_user_dir
 from ida_python_detection import detect_ida_python as _detect_ida_python
 from ida_python_detection import parse_idapyswitch_output as _parse_idapyswitch_output
 from package_hcli import ROOT, build_archive
@@ -47,7 +48,7 @@ def _ida_executable_from_hcli_config() -> Path | None:
     for value in (os.environ.get("HCLI_IDAUSR"), os.environ.get("IDAUSR")):
         if value:
             roots.append(Path(value.split(os.pathsep)[0]).expanduser())
-    roots.append(Path.home() / ".idapro")
+    roots.append(_default_ida_user_dir())
 
     for root in roots:
         config_path = root / "ida-config.json"

@@ -90,7 +90,7 @@ def test_personalize_archive_ignores_gateway_settings(tmp_path):
 
     with zipfile.ZipFile(destination) as archive:
         settings = json.loads(archive.read("ida-plugin.json"))["plugin"]["settings"]
-    assert settings[0]["default"] == "/opt/ida/ida"
+    assert settings[0]["default"] == str(Path("/opt/ida/ida"))
 
 
 def test_parse_idapyswitch_output_handles_linux_libpython_path(tmp_path):
@@ -172,6 +172,26 @@ def test_reads_selected_ida_from_hcli_config(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.setenv("HCLI_IDAUSR", str(idausr))
+    monkeypatch.delenv("IDAUSR", raising=False)
+
+    assert hcli_install._ida_executable_from_hcli_config() == ida_executable.resolve()
+
+
+def test_reads_selected_ida_from_windows_appdata_default(tmp_path, monkeypatch):
+    appdata = tmp_path / "AppData"
+    idausr = appdata / "Hex-Rays" / "IDA Pro"
+    ida_dir = tmp_path / "ida-install"
+    idausr.mkdir(parents=True)
+    ida_dir.mkdir()
+    ida_executable = ida_dir / "ida.exe"
+    ida_executable.write_bytes(b"")
+    (idausr / "ida-config.json").write_text(
+        json.dumps({"Paths": {"ida-install-dir": str(ida_dir)}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(hcli_install.os, "name", "nt")
+    monkeypatch.setenv("APPDATA", str(appdata))
+    monkeypatch.delenv("HCLI_IDAUSR", raising=False)
     monkeypatch.delenv("IDAUSR", raising=False)
 
     assert hcli_install._ida_executable_from_hcli_config() == ida_executable.resolve()

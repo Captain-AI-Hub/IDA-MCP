@@ -74,11 +74,11 @@ def _local_machine_defaults() -> dict[str, str]:
     """
     import os
 
+    from ida_python_detection import default_ida_user_dir
+
     idausr = os.environ.get("IDAUSR", "").strip()
-    user_root = Path(idausr.split(os.pathsep)[0]).expanduser() if idausr else (
-        Path(os.environ.get("APPDATA", "")) / "Hex-Rays" / "IDA Pro"
-        if os.name == "nt" and os.environ.get("APPDATA")
-        else Path.home() / ".idapro"
+    user_root = (
+        Path(idausr.split(os.pathsep)[0]).expanduser() if idausr else default_ida_user_dir()
     )
     try:
         document = json.loads((user_root / "ida-config.json").read_text(encoding="utf-8"))
