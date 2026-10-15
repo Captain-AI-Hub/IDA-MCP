@@ -64,7 +64,10 @@ def py_eval(
     """Execute Python code in IDA context.
     Returns dict with result/stdout/stderr.
     Has access to all IDA API modules.
-    Supports Jupyter-style evaluation (last expression is returned)."""
+    result = value of the trailing expression (Jupyter-style), or the
+    'result' variable for statement-style code; null when neither
+    applies. Values keep their JSON types; non-JSON values are stringified
+    at the transport layer."""
     stdout_capture = io.StringIO()
     stderr_capture = io.StringIO()
 
@@ -111,21 +114,22 @@ def py_eval(
             result_value = None
             exec_locals = {}
 
+            def _statement_result() -> object:
+                # Statement-style code: honor an explicit `result` variable;
+                # never guess from arbitrary locals.
+                return exec_locals.get("result")
+
             try:
                 tree = ast.parse(code)
             except SyntaxError:
                 exec(code, exec_globals, exec_locals)
                 exec_globals.update(exec_locals)
-                if "result" in exec_locals:
-                    result_value = str(exec_locals["result"])
-                elif exec_locals:
-                    last_key = list(exec_locals.keys())[-1]
-                    result_value = str(exec_locals[last_key])
+                result_value = _statement_result()
             else:
                 if not tree.body:
                     pass
                 elif len(tree.body) == 1 and isinstance(tree.body[0], ast.Expr):
-                    result_value = str(eval(code, exec_globals))
+                    result_value = eval(code, exec_globals)
                 elif isinstance(tree.body[-1], ast.Expr):
                     if len(tree.body) > 1:
                         exec_tree = ast.Module(body=tree.body[:-1], type_ignores=[])
@@ -136,23 +140,19 @@ def py_eval(
                         )
                         exec_globals.update(exec_locals)
                     eval_tree = ast.Expression(body=tree.body[-1].value)
-                    result_value = str(
-                        eval(compile(eval_tree, "<string>", "eval"), exec_globals)
+                    result_value = eval(
+                        compile(eval_tree, "<string>", "eval"), exec_globals
                     )
                 else:
                     exec(code, exec_globals, exec_locals)
                     exec_globals.update(exec_locals)
-                    if "result" in exec_locals:
-                        result_value = str(exec_locals["result"])
-                    elif exec_locals:
-                        last_key = list(exec_locals.keys())[-1]
-                        result_value = str(exec_locals[last_key])
+                    result_value = _statement_result()
 
         stdout_text = stdout_capture.getvalue()
         stderr_text = stderr_capture.getvalue()
 
         return {
-            "result": result_value or "",
+            "result": result_value,
             "stdout": stdout_text,
             "stderr": stderr_text,
         }
