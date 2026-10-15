@@ -1,4 +1,4 @@
-"""Shared error helpers for proxy/control surfaces."""
+"""Shared error-payload helpers used across tool and CLI boundaries."""
 from __future__ import annotations
 
 from typing import Any

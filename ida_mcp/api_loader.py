@@ -17,7 +17,6 @@ def ensure_api_modules_loaded() -> None:
     from . import api_modeling  # noqa: F401
     from . import api_modify  # noqa: F401
     from . import api_python  # noqa: F401
-    from . import api_resources  # noqa: F401
     try:
         from . import api_sigmaker  # noqa: F401
     except (ImportError, AttributeError):

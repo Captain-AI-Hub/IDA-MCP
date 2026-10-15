@@ -5,13 +5,16 @@ Provides:
     @idawrite  - wrap function for read/write execution in the IDA main thread
 
 Notes:
-    All IDA SDK calls must run on the main thread. These decorators ensure
-    thread safety via ida_kernwin.execute_sync().
+    In the IDA GUI all IDA SDK calls must run on the main thread; these
+    decorators marshal via ida_kernwin.execute_sync(). In an idalib worker
+    (``IDA_MCP_IDALIB=1``) there is no UI main loop, so the call runs
+    inline; the worker serializes SDK access with a lock instead.
 """
 from __future__ import annotations
 
 import functools
 import inspect
+import os
 from typing import Any, Callable, TypeVar
 
 try:
@@ -27,10 +30,16 @@ except ImportError:
 
 F = TypeVar('F', bound=Callable[..., Any])
 
+def _idalib_mode() -> bool:
+    """True inside an idalib worker (no UI main loop to marshal onto)."""
+    return os.environ.get("IDA_MCP_IDALIB", "") == "1"
+
 def _run_in_ida(fn: Callable[[], Any], write: bool = False) -> Any:
     """Execute callback in the IDA main thread and return the result."""
-    if ida_kernwin is None:
-        raise RuntimeError("ida_kernwin not available (not running in IDA?)")
+    if _idalib_mode() or ida_kernwin is None:
+        if ida_kernwin is None and not _idalib_mode():
+            raise RuntimeError("ida_kernwin not available (not running in IDA?)")
+        return fn()
         
     result_box: dict[str, Any] = {}
     exc_box: dict[str, BaseException] = {}

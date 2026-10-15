@@ -66,6 +66,33 @@ def test_personalize_archive_puts_detected_paths_in_prompt(tmp_path):
     assert settings["ida_python"]["default"] == str(ida_python)
 
 
+def test_personalize_archive_ignores_gateway_settings(tmp_path):
+    """gateway_token no longer exists; personalization must not require it."""
+    source = tmp_path / "source.zip"
+    destination = tmp_path / "personalized.zip"
+    manifest = {
+        "plugin": {
+            "settings": [
+                {"key": "ida_path", "name": "IDA executable path", "default": ""},
+                {"key": "ida_python", "name": "IDAPython interpreter path", "default": "auto"},
+            ]
+        }
+    }
+    with zipfile.ZipFile(source, "w") as archive:
+        archive.writestr("ida-plugin.json", json.dumps(manifest))
+
+    hcli_install.personalize_archive(
+        source,
+        destination,
+        ida_executable=Path("/opt/ida/ida"),
+        ida_python=Path("/opt/python/bin/python3"),
+    )
+
+    with zipfile.ZipFile(destination) as archive:
+        settings = json.loads(archive.read("ida-plugin.json"))["plugin"]["settings"]
+    assert settings[0]["default"] == "/opt/ida/ida"
+
+
 def test_parse_idapyswitch_output_handles_linux_libpython_path(tmp_path):
     prefix = tmp_path / "python-3.12"
     bindir = prefix / "bin"
@@ -125,41 +152,13 @@ def test_build_hcli_environment_forces_detected_idapython():
     assert environment["HCLI_CURRENT_IDA_PYTHON_EXE"] == str(python)
 
 
-def test_personalize_archive_sets_per_install_gateway_token(tmp_path):
-    source = tmp_path / "source.zip"
-    destination = tmp_path / "personalized.zip"
-    manifest = {
-        "plugin": {
-            "settings": [
-                {"key": "gateway_token", "default": "__AUTO_GENERATE_GATEWAY_TOKEN__"},
-                {"key": "ida_path", "name": "IDA executable path", "default": ""},
-                {"key": "ida_python", "name": "IDAPython interpreter path", "default": "auto"},
-            ]
-        }
-    }
-    with zipfile.ZipFile(source, "w") as archive:
-        archive.writestr("ida-plugin.json", json.dumps(manifest))
-
-    hcli_install.personalize_archive(
-        source,
-        destination,
-        ida_executable=Path("/opt/ida/ida"),
-        ida_python=Path("/opt/python/bin/python3"),
-        gateway_token="per-install-secret",
-    )
-
-    with zipfile.ZipFile(destination) as archive:
-        settings = json.loads(archive.read("ida-plugin.json"))["plugin"]["settings"]
-    values = {item["key"]: item for item in settings}
-    assert values["gateway_token"]["default"] == "per-install-secret"
-
-
-def test_mcp_client_config_contains_generated_token():
-    value = hcli_install.mcp_client_config("per-install-secret")
+def test_mcp_client_config_is_stdio():
+    value = hcli_install.mcp_client_config()
 
     server = value["mcpServers"]["ida-mcp"]
-    assert server["url"] == "http://127.0.0.1:11338/mcp"
-    assert server["headers"]["Authorization"] == "Bearer per-install-secret"
+    assert server["command"] == "uvx"
+    assert server["args"][-2:] == ["idamcp", "stdio"]
+    assert "--from" in server["args"]  # works before PyPI publish
 
 
 def test_reads_selected_ida_from_hcli_config(tmp_path, monkeypatch):
@@ -180,7 +179,7 @@ def test_reads_selected_ida_from_hcli_config(tmp_path, monkeypatch):
     assert hcli_install._ida_executable_from_hcli_config() == ida_executable.resolve()
 
 
-def test_manifest_prompts_for_idapython_and_auto_start_defaults_off():
+def test_manifest_prompts_for_idapython_and_auto_start_defaults_on():
     manifest = json.loads(
         (Path(__file__).resolve().parents[1] / "ida-plugin.json").read_text(
             encoding="utf-8"
@@ -188,8 +187,13 @@ def test_manifest_prompts_for_idapython_and_auto_start_defaults_off():
     )
     settings = {item["key"]: item for item in manifest["plugin"]["settings"]}
 
-    assert settings["gateway"]["default"] == "idle"
+    assert "gateway" not in settings
+    assert "gateway_token" not in settings
+    assert "enable_unsafe" not in settings
     assert settings["ida_python"]["default"] == "auto"
     assert settings["ida_python"]["prompt"] is True
-    assert settings["auto_start"]["default"] is False
-    assert settings["auto_start"]["prompt"] is True
+    assert settings["idalib_python"]["prompt"] is True
+    for removed in ("auto_start", "open_in_ida_autonomous", "instance_host",
+                    "instance_port", "launch_bundle_dir"):
+        assert removed not in settings, removed
+    assert manifest["plugin"]["pythonDependencies"] == ["ida-settings>=3,<4"]

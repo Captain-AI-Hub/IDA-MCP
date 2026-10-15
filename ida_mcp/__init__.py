@@ -1,15 +1,10 @@
 """Public package surface for IDA-MCP."""
+
 from __future__ import annotations
 
-try:
-    from .config import get_ida_default_port
+__version__ = "0.9.0"
 
-    DEFAULT_PORT = get_ida_default_port()
-except Exception:
-    DEFAULT_PORT = 10000
-
-from .rpc import tool, resource, unsafe, get_tools, get_resources, is_unsafe
-from .server_factory import create_mcp_server
+from .rpc import tool, get_tools
 from .sync import idaread, idawrite
 from .utils import (
     parse_address,
@@ -20,14 +15,9 @@ from .utils import (
 )
 
 __all__ = [
-    "DEFAULT_PORT",
-    "create_mcp_server",
+    "__version__",
     "tool",
-    "resource",
-    "unsafe",
     "get_tools",
-    "get_resources",
-    "is_unsafe",
     "idaread",
     "idawrite",
     "parse_address",

@@ -2,12 +2,12 @@
   "IDAMetadataDescriptorVersion": 1,
   "plugin": {
     "name": "IDA-MCP",
-    "version": "0.8.1",
+    "version": "0.9.0",
     "entryPoint": "ida_mcp.py",
     "urls": {
       "repository": "https://github.com/Captain-AI-Hub/IDA-MCP"
     },
-    "description": "FastMCP server, gateway, and automation tools for IDA Pro.",
+    "description": "JSON-RPC bridge for the IDA-MCP standalone server (stdio default, http optional) with headless idalib workers.",
     "categories": [
       "disassembly-and-processor-modules",
       "decompilation",
@@ -29,47 +29,16 @@
     ],
     "idaVersions": ">=9.0",
     "pythonDependencies": [
-      "fastmcp>=4.0.0b1,<5",
-      "mcp>=2.0.0,<3",
-      "starlette>=1.0.1,<2",
-      "uvicorn>=0.35,<1",
-      "pydantic>=2.12,<3",
       "ida-settings>=3,<4"
     ],
     "settings": [
-      {
-        "key": "gateway",
-        "type": "string",
-        "required": false,
-        "default": "idle",
-        "name": "Gateway lifecycle action",
-        "documentation": "Set with HCLI to start, stop, or restart; IDA-MCP consumes the action and resets it to idle. No gateway action runs automatically on a fresh install.",
-        "choices": [
-          "idle",
-          "start",
-          "stop",
-          "restart"
-        ],
-        "prompt": false
-      },
-      {
-        "key": "gateway_token",
-        "type": "string",
-        "required": false,
-        "name": "Gateway token (generated automatically on first IDA launch)",
-        "documentation": "IDA-MCP replaces the packaged sentinel with a random per-machine token on first IDA launch, saves it through ida-settings, and displays it once.",
-        "validation_pattern": "(?:__AUTO_GENERATE_GATEWAY_TOKEN__|.{20,})",
-        "prompt": false,
-        "secret": true,
-        "default": "__AUTO_GENERATE_GATEWAY_TOKEN__"
-      },
       {
         "key": "ida_path",
         "type": "string",
         "required": false,
         "default": "",
         "name": "IDA executable path",
-        "documentation": "Optional full path to ida.exe (Windows) or ida. Needed by the open_in_ida tool.",
+        "documentation": "Optional full path to ida.exe (Windows) or ida. Needed by GUI launches (open_database with headless=gui).",
         "prompt": true
       },
       {
@@ -78,91 +47,17 @@
         "required": false,
         "default": "auto",
         "name": "IDAPython interpreter path",
-        "documentation": "Enter the Python executable used by this IDA installation, or keep auto to resolve it from the running IDA process on first launch.",
+        "documentation": "Python executable used by this IDA installation; auto resolves it from the running IDA process on first launch.",
         "prompt": true
       },
       {
-        "key": "auto_start",
-        "type": "boolean",
-        "required": false,
-        "default": false,
-        "name": "Start MCP automatically",
-        "documentation": "Start the IDA-MCP instance server automatically when an IDA database opens.",
-        "prompt": true
-      },
-      {
-        "key": "enable_unsafe",
-        "type": "boolean",
-        "required": false,
-        "default": false,
-        "name": "Enable unsafe tools",
-        "documentation": "Enable py_eval, binary patching, and debugger tools. Keep disabled unless explicitly needed.",
-        "prompt": true
-      },
-      {
-        "key": "open_in_ida_autonomous",
-        "type": "boolean",
-        "required": false,
-        "default": true,
-        "name": "Open IDA autonomously",
-        "documentation": "Append -A when the open_in_ida tool launches IDA.",
-        "prompt": true
-      },
-      {
-        "key": "http_host",
+        "key": "idalib_python",
         "type": "string",
         "required": false,
-        "default": "127.0.0.1",
-        "name": "Gateway bind address",
-        "documentation": "Address used by the standalone MCP gateway.",
+        "default": "",
+        "name": "idalib Python (headless workers)",
+        "documentation": "Python with the official idalib bindings activated (idapro importable). Used by headless open_database workers; auto-detected from ida_python when empty.",
         "prompt": true
-      },
-      {
-        "key": "http_port",
-        "type": "string",
-        "required": false,
-        "default": "11338",
-        "name": "Gateway port",
-        "documentation": "TCP port used by the standalone MCP gateway.",
-        "validation_pattern": "[0-9]{1,5}",
-        "prompt": true
-      },
-      {
-        "key": "http_path",
-        "type": "string",
-        "required": false,
-        "default": "/mcp",
-        "name": "Gateway MCP path",
-        "documentation": "HTTP path exposed by the standalone MCP gateway.",
-        "validation_pattern": "/.*",
-        "prompt": true
-      },
-      {
-        "key": "mcp_sessionless",
-        "type": "boolean",
-        "required": false,
-        "default": true,
-        "name": "Sessionless MCP HTTP",
-        "documentation": "Use per-request MCP HTTP without Mcp-Session-Id.",
-        "prompt": false
-      },
-      {
-        "key": "mcp_json_response",
-        "type": "boolean",
-        "required": false,
-        "default": true,
-        "name": "MCP JSON responses",
-        "documentation": "Return one application/json response for modern requests instead of SSE framing.",
-        "prompt": false
-      },
-      {
-        "key": "mcp_legacy_protocol",
-        "type": "boolean",
-        "required": false,
-        "default": true,
-        "name": "Legacy MCP compatibility",
-        "documentation": "Continue accepting pre-2026 initialize/session clients.",
-        "prompt": false
       },
       {
         "key": "request_timeout",
@@ -170,9 +65,9 @@
         "required": false,
         "default": "30",
         "name": "Request timeout",
-        "documentation": "Gateway request timeout in seconds.",
+        "documentation": "Tool request timeout in seconds.",
         "validation_pattern": "[0-9]+",
-        "prompt": true
+        "prompt": false
       },
       {
         "key": "debug",

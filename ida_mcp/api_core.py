@@ -1,8 +1,6 @@
 """Core API - IDB metadata, function/string/global lists, etc.
 
 Provides tools:
-    - check_connection     check gateway/registry connection status
-    - list_instances       list all registered instances in the gateway
     - get_metadata         get IDB metadata
     - list_functions       list functions
     - list_globals         list global variables
@@ -68,9 +66,6 @@ except ImportError:
     ida_loader = None
     ida_pro = None
 
-from . import registry
-
-
 # ============================================================================
 # String cache (avoid rebuilding strlist on every call)
 # ============================================================================
@@ -95,29 +90,8 @@ def init_caches():
 
 
 # ============================================================================
-# Instance management
+# IDB metadata
 # ============================================================================
-
-@tool
-def check_connection() -> dict:
-    """Check gateway/registry health. Returns { ok: bool, count: int }."""
-    if registry is None:
-        return {"ok": False, "count": 0}
-    try:
-        return registry.check_connection()
-    except Exception:
-        return {"ok": False, "count": 0}
-
-
-@tool
-def list_instances() -> List[dict]:
-    """List all IDA instances registered in the shared gateway."""
-    if registry is None:
-        return []
-    try:
-        return registry.get_instances()
-    except Exception as e:
-        return [{"error": str(e)}]
 
 @tool
 @idaread

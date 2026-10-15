@@ -21,17 +21,15 @@ pytestmark = pytest.mark.core
 class TestConnection:
     """Connection and instance management tests."""
 
-    def test_check_connection(self, tool_caller):
-        """Test connection check."""
-        result = tool_caller("check_connection")
-        assert "ok" in result
-        assert result["ok"] is True
+    def test_wait_for_analysis(self, tool_caller):
+        """Analysis must be complete after the session instance opens."""
+        result = tool_caller("wait_for_analysis")
+        assert result.get("analyzed") is True
 
-    def test_list_instances(self, tool_caller):
-        """Test listing instances."""
-        result = tool_caller("list_instances")
-        assert isinstance(result, list)
-        assert len(result) >= 1
+    def test_save_idb_roundtrip(self, tool_caller):
+        """save_idb keeps the current database path."""
+        result = tool_caller("save_idb", {"path": ""})
+        assert result.get("saved") is True
 
 
 class TestMetadata:

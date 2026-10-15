@@ -1,11 +1,11 @@
-"""RPC decorators and tool/resource registries."""
+"""RPC decorators and the tool registry."""
 from __future__ import annotations
 
 from dataclasses import dataclass
 import functools
 import inspect
 import json
-from typing import Any, Callable, Dict, Optional, get_type_hints
+from typing import Any, Callable, Dict, get_type_hints
 
 
 @dataclass
@@ -13,14 +13,12 @@ class ToolSpec:
     name: str
     fn: Callable
     description: str
-    unsafe: bool
     execution_mode: str
     module_name: str
 
 
 _tools: Dict[str, Callable] = {}
 _tool_specs: Dict[str, ToolSpec] = {}
-_resources: Dict[str, Callable] = {}
 
 
 def _tool_description(fn: Callable) -> str:
@@ -32,16 +30,11 @@ def _execution_mode(fn: Callable) -> str:
     return str(getattr(fn, "_ida_exec_mode", "direct"))
 
 
-def _unsafe_flag(fn: Callable) -> bool:
-    return bool(getattr(fn, "_unsafe", False))
-
-
 def _build_tool_spec(fn: Callable) -> ToolSpec:
     return ToolSpec(
         name=fn.__name__,
         fn=fn,
         description=_tool_description(fn),
-        unsafe=_unsafe_flag(fn),
         execution_mode=_execution_mode(fn),
         module_name=str(getattr(fn, "__module__", "")),
     )
@@ -59,34 +52,12 @@ def tool(fn: Callable) -> Callable:
     return fn
 
 
-def resource(uri: str):
-    """Register an MCP resource URI."""
-
-    def decorator(fn: Callable) -> Callable:
-        fn._resource_uri = uri  # type: ignore[attr-defined]
-        _resources[uri] = fn
-        return fn
-
-    return decorator
-
-
-def unsafe(fn: Callable) -> Callable:
-    """Mark a tool as unsafe."""
-    fn._unsafe = True  # type: ignore[attr-defined]
-    _update_tool_spec(fn)
-    return fn
-
-
 def get_tools() -> Dict[str, Callable]:
     return dict(_tools)
 
 
 def get_tool_specs() -> Dict[str, ToolSpec]:
     return dict(_tool_specs)
-
-
-def get_resources() -> Dict[str, Callable]:
-    return dict(_resources)
 
 
 def text_result_tool(fn: Callable) -> Callable:
@@ -115,18 +86,10 @@ def text_result_tool(fn: Callable) -> Callable:
     return wrapper
 
 
-def is_unsafe(fn: Callable) -> bool:
-    spec = _tool_specs.get(fn.__name__)
-    if spec is not None and spec.fn is fn:
-        return spec.unsafe
-    return _unsafe_flag(fn)
-
-
 def reset_registry() -> None:
-    """Clear all registered tools, specs, and resources.
+    """Clear all registered tools and specs.
 
     Intended exclusively for use in test teardown.
     """
     _tools.clear()
     _tool_specs.clear()
-    _resources.clear()

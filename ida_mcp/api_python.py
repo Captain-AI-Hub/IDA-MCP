@@ -12,7 +12,7 @@ import os
 import traceback
 from typing import Annotated
 
-from .rpc import tool, unsafe
+from .rpc import tool
 from .sync import idawrite
 
 # IDA module imports
@@ -56,7 +56,6 @@ def _lazy_import(module_name: str):
         return None
 
 
-@unsafe
 @tool
 @idawrite
 def py_eval(
@@ -166,7 +165,6 @@ def py_eval(
         }
 
 
-@unsafe
 @tool
 @idawrite
 def py_exec_file(

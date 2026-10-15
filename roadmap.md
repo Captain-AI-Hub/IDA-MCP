@@ -1,48 +1,43 @@
 # IDA-MCP Roadmap
 
-## Current Baseline
+## Current Baseline (v0.9)
 
-- IDA 9.x-oriented plugin entry point and per-instance FastMCP server.
-- Standalone gateway with internal HTTP routes and MCP proxy endpoint.
-- Core analysis, memory, modeling, modify, stack, type, debug, Python, and resource APIs.
-- CLI control surface through `ida_mcp/command.py`.
-- Live-IDA pytest suite under `test/`.
+- stdio-only MCP server (`uvx idamcp stdio`) with fastmcp 4.x; all 93 tools
+  exposed with no unsafe gating (the bridge binds loopback by default).
+- Per-instance stdlib JSON-RPC bridge; shared JSON instance registry; no
+  gateway, no port-registration forwarding, no HTTP transport, no `ida://`
+  resources (all removed in v0.9).
+- Official-style lifecycle tools: open_database (attach / headless idalib
+  worker that creates+analyzes .i64 / GUI launch), list/select/save/close.
+- `ida_python_reference`: BM25 index over the attached runtime's IDAPython
+  modules (~21k entries).
+- idalib Python auto-detection (config → ida_python → ida-config.json →
+  ida-python → managed/legacy venvs) cached into the user config.
+- pytest suite: unit tests run without IDA; backend tests run live against a
+  headless worker when idalib is available (200 passed / 19 skipped on the
+  dev machine).
 
 ## Priorities
 
-### P0: Standalone Repository Stabilization
+### P0 — stabilization
+- Ship `idamcp` to PyPI; pin CI to run the unit suite.
+- Worker crash/timeout hardening: reap orphan workers, cap retry storms.
 
-- Keep this repository focused on the IDA plugin and gateway only.
-- Keep `ida-plugin.json`, `README.md`, `API.md`, `project.md`, and `roadmap.md` in standalone-repo form.
-- Keep Sarma integration through Git submodule boundaries.
-- Remove stale `ide/resources/ida_mcp` path assumptions from tests and docs.
+### P1 — headless depth
+- idalib worker env isolation (`idalib-venv` bootstrap + py-activate-idalib
+  automation when no candidate interpreter is found).
+- Wait-for-analysis progress reporting in open_database results.
 
-### P1: Contract Stability
+### P2 — tool surface
+- dbg_* currently require a GUI instance with a configured debugger; revisit
+  local debuggers under idalib workers if supported.
+- Consider batch tool calls to reduce round-trips over the bridge.
 
-- Stabilize `/internal`, proxy tools, direct instance tools, and `ida://` resources.
-- Document request and response shapes in `API.md`.
-- Make errors consistent across CLI, internal HTTP, MCP tools, and resources.
+### P3 — docs
+- Cache the IDAPython reference index per IDA version on disk.
+- Expose module summaries through `ida_python_reference("modules")` UX polish.
 
-### P2: Multi-Instance Reliability
+## Non-goals
 
-- Harden heartbeat, unresponsive instance handling, and shutdown behavior.
-- Clarify concurrent call and timeout semantics.
-- Improve instance selection and recovery behavior in the gateway proxy.
-
-### P3: Resource And Browsing Depth
-
-- Expand `ida://` resource coverage.
-- Improve pagination, filtering, and large response behavior.
-- Keep read-only browsing APIs clearly separated from mutating tools.
-
-### P4: Testing
-
-- Broaden gateway, proxy, lifecycle, and resource test coverage.
-- Keep debug tests opt-in.
-- Maintain fixture coverage for representative IDA 9.x databases.
-
-## Non-Goals
-
-- Do not place PySide6 UI, workspace persistence, chat state, or Sarma workflow code in this repository.
-- Do not make `ida_mcp` depend on Sarma.
-- Do not expand unsafe tools without explicit config gating and documentation.
+- No HTTP/SSE transport, no gateway/proxy resurrection.
+- No PySide6 UI or Sarma IDE code in this repository.

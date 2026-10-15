@@ -1,41 +1,33 @@
 """IDA-MCP configuration management module.
 
-Reads the config.conf file and provides access to all configurable options.
+Reads config.conf files and provides access to all configurable options.
+
+Configuration sources, later wins:
+    1. built-in defaults
+    2. packaged ``ida_mcp/config.conf`` (plugin install directory)
+    3. user config ``<IDA_MCP_STATE_DIR|IDAUSR|~/.idapro>/ida-mcp/config.conf``
+    4. environment overrides ``IDA_MCP_CONFIG_<KEY>``
+    5. HCLI ida-settings overrides (only while running inside IDA)
 
 Configuration Options
 ====================
-Runtime switches:
-    - enable_gateway: whether to enable the gateway and MCP proxy (default true)
-    - enable_unsafe: whether to enable unsafe tools (default false)
-    - wsl_path_bridge: whether to enable WSL/Windows path bridging (default false)
+MCP server (standalone process):
+    - stdio is the only transport; no HTTP settings remain
 
-Gateway HTTP config:
-    - http_host: gateway bind address (default 127.0.0.1)
-    - http_port: gateway listen port (default 11338)
-    - http_path: MCP endpoint path (default /mcp)
-    - gateway_token: bearer token required only for non-loopback clients
+IDA / headless launch:
+    - ida_path: IDA executable (GUI launches)
+    - ida_python: IDAPython interpreter (dependency installs)
+    - idalib_python: Python with idalib activated (headless workers)
 
-IDA instance config:
-    - ida_default_port: starting port for IDA instance MCP (default 10000)
-    - ida_path: IDA executable path
-    - ida_python: IDA Python executable path
-    - ida_host: IDA instance MCP listen address (default 127.0.0.1)
-    - open_in_ida_bundle_dir: open_in_ida staging directory (optional)
-    - open_in_ida_autonomous: whether open_in_ida defaults to -A (default true)
-    - auto_start: whether to auto-start the instance service after plugin load (default false)
-    - server_name: MCP service name (default IDA-MCP)
-
-General config:
+General:
     - request_timeout: request timeout in seconds (default 30)
     - debug: whether to enable debug logging (default false)
 """
 
 from __future__ import annotations
 
-import json
 import os
 import re
-import secrets
 import sys
 from typing import Any, Dict, Mapping
 
@@ -43,30 +35,15 @@ from typing import Any, Dict, Mapping
 _CONFIG_DIR = os.path.dirname(os.path.abspath(__file__))
 _CONFIG_FILE = os.path.join(_CONFIG_DIR, "config.conf")
 
+_TRANSPORTS = ("stdio", "http")
+
 # default configuration
 _DEFAULT_CONFIG = {
-    # runtime switches
-    "enable_gateway": True,  # whether to enable the gateway and MCP proxy
-    "enable_unsafe": False,  # whether to enable unsafe tools
-    "wsl_path_bridge": False,  # whether to enable WSL/Windows path bridging
-    # Gateway HTTP config
-    "http_host": "127.0.0.1",
-    "http_port": 11338,
-    "http_path": "/mcp",
-    "mcp_legacy_protocol": True,
-    "mcp_json_response": True,
-    "mcp_sessionless": True,
-    "gateway_token": None,
-    # IDA instance config
-    "ida_default_port": 10000,
+    # IDA / headless launch
     "ida_path": None,  # IDA executable path
     "ida_python": None,  # IDA Python executable path
-    "ida_host": "127.0.0.1",  # IDA instance MCP listen address
-    "open_in_ida_bundle_dir": None,  # open_in_ida staging directory
-    "open_in_ida_autonomous": True,  # whether open_in_ida defaults to appending -A
-    "auto_start": False,  # whether to auto-start instance service after plugin load
-    "server_name": "IDA-MCP",  # MCP service name
-    # general config
+    "idalib_python": None,  # Python with idalib activated (headless workers)
+    # general
     "request_timeout": 30,
     "debug": False,
 }
@@ -74,23 +51,13 @@ _DEFAULT_CONFIG = {
 # HCLI-managed settings. HCLI stores these in ida-config.json and the
 # ida-settings package exposes them while the plugin is running inside IDA.
 _HCLI_SETTING_KEYS = (
-    "gateway_token",
     "ida_path",
     "ida_python",
-    "auto_start",
-    "enable_unsafe",
-    "open_in_ida_autonomous",
-    "http_host",
-    "http_port",
-    "http_path",
-    "mcp_legacy_protocol",
-    "mcp_json_response",
-    "mcp_sessionless",
+    "idalib_python",
     "request_timeout",
     "debug",
 )
 _ENV_PREFIX = "IDA_MCP_CONFIG_"
-_AUTO_TOKEN_SENTINEL = "__AUTO_GENERATE_GATEWAY_TOKEN__"
 _AUTO_PYTHON_SENTINELS = {"auto", "detect", "auto-detect"}
 
 # cached configuration
@@ -199,8 +166,21 @@ def parse_config_file(path: str) -> Dict[str, Any]:
     return config
 
 
+def _user_config_file() -> str:
+    """User-scope config path (also used by uvx-launched standalone servers)."""
+    try:
+        from . import instances
+
+        state_dir = instances.get_state_dir()
+    except Exception:  # noqa: BLE001 - state dir must never break config
+        state_dir = None
+    if not state_dir:
+        return os.path.join(os.path.expanduser("~"), ".idapro", "ida-mcp", "config.conf")
+    return os.path.join(str(state_dir), "config.conf")
+
+
 def _environment_overrides() -> Dict[str, Any]:
-    """Read settings forwarded to the standalone gateway process."""
+    """Read settings forwarded to child processes or set explicitly."""
     overrides: Dict[str, Any] = {}
     for key in _HCLI_SETTING_KEYS:
         value = os.environ.get(f"{_ENV_PREFIX}{key.upper()}")
@@ -220,43 +200,27 @@ def _hcli_setting_overrides() -> Dict[str, Any]:
     for key in _HCLI_SETTING_KEYS:
         try:
             value = ida_settings.get_current_plugin_setting(key)
-        except (KeyError, RuntimeError, ValueError, OSError):
-            continue
         except Exception:
             # Configuration must remain usable if ida-settings changes or is
-            # unavailable in a standalone child process.
+            # unavailable in a child process.
             continue
         if isinstance(value, str):
             value = value.strip()
             if not value:
                 continue
-            # A generated token written to config.conf must beat the packaged
-            # HCLI sentinel when ida-settings is readable but not writable.
-            if key == "gateway_token" and value == _AUTO_TOKEN_SENTINEL:
-                continue
         overrides[key] = value
     return overrides
 
 
-
-def _set_hcli_setting(key: str, value: str | bool) -> bool:
-    """Persist a setting through HCLI's shared ida-config.json store."""
+def _write_config_string(path: str, key: str, value: str) -> bool:
+    """Best-effort persistence for non-HCLI plugin installations."""
     try:
-        import ida_settings  # type: ignore
-
-        ida_settings.set_current_plugin_setting(key, value)
-        return True
-    except Exception:
-        return False
-
-
-def _write_config_string(key: str, value: str) -> bool:
-    """Fallback persistence for non-HCLI/manual plugin installations."""
-    try:
-        with open(_CONFIG_FILE, "r", encoding="utf-8", newline="") as handle:
+        with open(path, "r", encoding="utf-8", newline="") as handle:
             lines = handle.readlines()
     except OSError:
         return False
+
+    import json
 
     encoded = json.dumps(value, ensure_ascii=False)
     replaced = False
@@ -277,20 +241,11 @@ def _write_config_string(key: str, value: str) -> bool:
     if not replaced:
         output.append(f"{key} = {encoded}\n")
     try:
-        with open(_CONFIG_FILE, "w", encoding="utf-8", newline="") as handle:
+        with open(path, "w", encoding="utf-8", newline="") as handle:
             handle.writelines(output)
         return True
     except OSError:
         return False
-
-
-def _persist_string_setting(key: str, value: str) -> str | None:
-    """Persist a string setting and return the successful storage backend."""
-    if _set_hcli_setting(key, value):
-        return "hcli"
-    if _write_config_string(key, value):
-        return "config"
-    return None
 
 
 def _detect_running_ida_python() -> str | None:
@@ -331,30 +286,14 @@ def _detect_running_ida_python() -> str | None:
 
 
 def initialize_runtime_settings() -> Dict[str, Any]:
-    """Generate first-run secrets and resolve machine-specific HCLI settings."""
+    """Resolve machine-specific settings on first plugin load."""
     global _cached_config
 
     config = load_config(reload=True)
     result: Dict[str, Any] = {
-        "gateway_token": None,
-        "gateway_token_generated": False,
-        "gateway_token_storage": None,
         "ida_python": None,
         "ida_python_detected": False,
     }
-
-    raw_token = config.get("gateway_token")
-    token = raw_token.strip() if isinstance(raw_token, str) else ""
-    if not token or token == _AUTO_TOKEN_SENTINEL:
-        token = secrets.token_urlsafe(32)
-        # The token must be displayed on the first IDA launch even when the
-        # HCLI settings store is unavailable. Persistence is best-effort; the
-        # generated value is still the effective runtime credential.
-        result["gateway_token_generated"] = True
-        result["gateway_token_storage"] = _persist_string_setting(
-            "gateway_token", token
-        )
-    result["gateway_token"] = token
 
     raw_python = config.get("ida_python")
     python_value = raw_python.strip() if isinstance(raw_python, str) else ""
@@ -362,25 +301,12 @@ def initialize_runtime_settings() -> Dict[str, Any]:
         detected = _detect_running_ida_python()
         if detected:
             python_value = detected
-            if _persist_string_setting("ida_python", detected) is not None:
+            if _write_config_string(_CONFIG_FILE, "ida_python", detected):
                 result["ida_python_detected"] = True
     result["ida_python"] = python_value or None
 
     _cached_config = None
     effective = load_config(reload=True)
-    # Keep generated/detected values effective for this IDA process even when
-    # persistence is unavailable. Child gateway processes receive them through
-    # build_subprocess_environment(). A later IDA launch will retry persistence.
-    effective_token = effective.get("gateway_token")
-    if (
-        result["gateway_token_generated"]
-        and (
-            not isinstance(effective_token, str)
-            or not effective_token.strip()
-            or effective_token.strip() == _AUTO_TOKEN_SENTINEL
-        )
-    ):
-        effective["gateway_token"] = token
     if python_value and (
         not raw_python
         or str(raw_python).strip().lower() in _AUTO_PYTHON_SENTINELS
@@ -391,7 +317,7 @@ def initialize_runtime_settings() -> Dict[str, Any]:
 
 
 def load_config(reload: bool = False) -> Dict[str, Any]:
-    """Load config.conf, gateway environment, and HCLI settings."""
+    """Load defaults, config files, environment, and HCLI settings."""
     global _cached_config
 
     if _cached_config is not None and not reload:
@@ -399,6 +325,7 @@ def load_config(reload: bool = False) -> Dict[str, Any]:
 
     config = dict(_DEFAULT_CONFIG)
     config.update(parse_config_file(_CONFIG_FILE))
+    config.update(parse_config_file(_user_config_file()))
     config.update(_environment_overrides())
     config.update(_hcli_setting_overrides())
     _cached_config = config
@@ -408,7 +335,7 @@ def load_config(reload: bool = False) -> Dict[str, Any]:
 def build_subprocess_environment(
     base: Mapping[str, str] | None = None,
 ) -> Dict[str, str]:
-    """Forward effective HCLI settings to the standalone gateway process."""
+    """Forward effective settings to spawned child processes."""
     environment = dict(os.environ if base is None else base)
     config = load_config()
     for key in _HCLI_SETTING_KEYS:
@@ -424,138 +351,35 @@ def build_subprocess_environment(
 
 
 # ============================================================================
-# Gateway internal API config accessors
+# User-scope config persistence (used by standalone/uvx runs)
 # ============================================================================
 
 
-def get_http_bind_host() -> str:
-    """Get the HTTP gateway bind address."""
-    config = load_config()
-    return str(config.get("http_host", "127.0.0.1"))
+def persist_user_setting(key: str, value: str) -> bool:
+    """Persist one setting into <state_dir>/config.conf, creating it if needed.
 
-
-def get_http_connect_host() -> str:
-    """Get the address clients should use to reach the HTTP gateway."""
-    host = get_http_bind_host().strip()
-    if host in {"0.0.0.0", "::", ""}:
-        return "127.0.0.1"
-    return host
-
-
-def get_gateway_internal_host() -> str:
-    """Get the client-facing address for the gateway internal API."""
-    return get_http_connect_host()
-
-
-def get_gateway_internal_port() -> int:
-    """Get the gateway internal API port (same as the gateway port)."""
-    return get_http_port()
-
-
-def get_gateway_internal_url() -> str:
-    """Get the gateway internal API base URL."""
-    return f"http://{get_http_connect_host()}:{get_http_port()}/internal"
-
-
-# ============================================================================
-# Gateway HTTP config accessors
-# ============================================================================
-
-
-def get_http_port() -> int:
-    """Get the gateway HTTP listen port."""
-    config = load_config()
-    return _coerce_int_range(config.get("http_port", 11338), 11338, 1, 65535)
-
-
-def get_http_path() -> str:
-    """Get the HTTP MCP endpoint path."""
-    config = load_config()
-    return str(config.get("http_path", "/mcp"))
-
-
-def is_mcp_sessionless_enabled() -> bool:
-    """Whether sessionless HTTP is enabled for legacy transport requests."""
-    config = load_config()
-    return _coerce_bool(config.get("mcp_sessionless", True), True)
-
-
-def is_mcp_legacy_protocol_enabled() -> bool:
-    """Whether pre-2026 initialize/session clients remain accepted."""
-    config = load_config()
-    return _coerce_bool(config.get("mcp_legacy_protocol", True), True)
-
-
-def is_mcp_json_response_enabled() -> bool:
-    """Whether HTTP requests prefer one JSON response over SSE framing."""
-    config = load_config()
-    return _coerce_bool(config.get("mcp_json_response", True), True)
-
-
-def get_http_url() -> str:
-    """Get the full HTTP gateway URL for client access."""
-    host = get_http_connect_host()
-    port = get_http_port()
-    path = get_http_path()
-    return f"http://{host}:{port}{path}"
-
-
-def get_gateway_token() -> str | None:
-    """Get the shared gateway bearer token.
-
-    Loopback requests do not require it. Installers should still write a random
-    token when the gateway may be reached through a non-loopback interface.
+    Used to cache machine-specific detections (e.g. the idalib Python) so
+    later uvx/stdio launches skip probing.
     """
-    config = load_config()
-    token = config.get("gateway_token")
-    if isinstance(token, str):
-        token = token.strip()
-        if token and token != _AUTO_TOKEN_SENTINEL:
-            return token
-    return None
-
-
-def get_mcp_client_config() -> Dict[str, Any]:
-    """Return a copy/paste-ready MCP client configuration for the gateway."""
-    token = get_gateway_token()
-    server: Dict[str, Any] = {"url": get_http_url()}
-    # Do not emit empty bearer headers: loopback is intentionally unauthenticated
-    # and clients may interpret a blank bearer value as a credential.
-    if token:
-        server["headers"] = {
-            "Authorization": f"Bearer {token}",
-            "X-IDA-MCP-Token": token,
-        }
-    return {"mcpServers": {"ida-mcp": server}}
-
-
-def get_gateway_auth_headers() -> dict[str, str]:
-    """Get HTTP headers for calls to a token-protected gateway."""
-    token = get_gateway_token()
-    if not token:
-        return {}
-    return {
-        "Authorization": f"Bearer {token}",
-        "X-IDA-MCP-Token": token,
-    }
+    path = _user_config_file()
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        if not os.path.exists(path):
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(
+                    "# IDA-MCP user configuration (managed by IDA-MCP; edit freely)\n"
+                )
+        _write_config_string(path, key, value)
+        global _cached_config
+        _cached_config = None
+        return True
+    except OSError:
+        return False
 
 
 # ============================================================================
-# IDA instance config accessors
+# IDA / headless launch config accessors
 # ============================================================================
-
-
-def get_ida_host() -> str:
-    """Get the IDA instance MCP server listen address."""
-    config = load_config()
-    host = str(config.get("ida_host", "127.0.0.1")).strip()
-    return host or "127.0.0.1"
-
-
-def get_ida_default_port() -> int:
-    """Get the starting port for IDA instance MCP."""
-    config = load_config()
-    return _coerce_int_range(config.get("ida_default_port", 10000), 10000, 1, 65535)
 
 
 def get_ida_path() -> str | None:
@@ -582,21 +406,16 @@ def get_ida_python() -> str | None:
     return None
 
 
-def get_open_in_ida_bundle_dir() -> str | None:
-    """Get the staging directory used by open_in_ida."""
+def get_idalib_python() -> str | None:
+    """Get the Python interpreter with idalib activated (headless workers)."""
     config = load_config()
-    configured_path = config.get("open_in_ida_bundle_dir")
-    if isinstance(configured_path, str):
-        configured_path = configured_path.strip()
-        if configured_path:
-            return configured_path
+    path = config.get("idalib_python")
+
+    if isinstance(path, str):
+        path = path.strip()
+        if path and path.lower() not in _AUTO_PYTHON_SENTINELS:
+            return path
     return None
-
-
-def is_open_in_ida_autonomous_enabled() -> bool:
-    """Whether open_in_ida should default to autonomous mode."""
-    config = load_config()
-    return _coerce_bool(config.get("open_in_ida_autonomous", True), True)
 
 
 # ============================================================================
@@ -616,37 +435,3 @@ def is_debug_enabled() -> bool:
     return bool(config.get("debug", False))
 
 
-# ============================================================================
-# Runtime switches
-# ============================================================================
-
-
-def is_gateway_enabled() -> bool:
-    """Whether the gateway and MCP proxy are enabled."""
-    config = load_config()
-    return _coerce_bool(config.get("enable_gateway", True), True)
-
-
-def is_unsafe_enabled() -> bool:
-    """Whether unsafe tools are enabled."""
-    config = load_config()
-    return _coerce_bool(config.get("enable_unsafe", False), False)
-
-
-def is_wsl_path_bridge_enabled() -> bool:
-    """Whether WSL/Windows path bridging is enabled."""
-    config = load_config()
-    return _coerce_bool(config.get("wsl_path_bridge", False), False)
-
-
-def is_auto_start_enabled() -> bool:
-    """Whether the instance service auto-starts after plugin load."""
-    config = load_config()
-    return _coerce_bool(config.get("auto_start", False), False)
-
-
-def get_server_name() -> str:
-    """Get the MCP service name."""
-    config = load_config()
-    name = str(config.get("server_name", "IDA-MCP")).strip()
-    return name or "IDA-MCP"

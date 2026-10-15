@@ -3,6 +3,7 @@
 Prerequisites:
 1. Debugger type must be manually configured in IDA
 2. If a PDB dialog pops up, close it manually
+3. A GUI IDA instance (idalib workers have no debugger backend)
 
 Test order:
 1. Phase 0: Breakpoint management (no running debugger required)
@@ -22,6 +23,12 @@ from typing import Optional
 from ida_mcp import api_debug
 
 pytestmark = pytest.mark.debug
+
+
+@pytest.fixture(autouse=True)
+def _require_gui_instance(ida_instance):
+    if ida_instance.get("headless"):
+        pytest.skip("dbg_* tools need a GUI IDA instance with a configured debugger")
 
 
 class DebugState:

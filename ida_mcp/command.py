@@ -1,5 +1,21 @@
 #!/usr/bin/env python
-"""IDA-MCP command-line helper."""
+"""IDA-MCP command-line interface.
+
+Default action serves MCP over stdio (the only transport).::
+
+    idamcp                # serve MCP over stdio
+    idamcp stdio          # same, explicit
+
+Instance operations::
+
+    idamcp instances list
+    idamcp open <path> [--gui] [--no-wait]
+    idamcp close [--id ID] [--terminate] [--no-save]
+    idamcp save [--id ID]
+    idamcp tool call NAME [--params JSON] [--id ID]
+    idamcp reference "query" [--module ida_funcs]
+    idamcp config show
+"""
 
 from __future__ import annotations
 
@@ -7,24 +23,14 @@ import argparse
 import json
 import pathlib
 import sys
-from typing import Any, Sequence
+from typing import Any, Optional, Sequence
 
-# Ensure the parent directory (containing the ida_mcp package) is on sys.path
-# so that `from ida_mcp import ...` works regardless of how this script is invoked.
 _repo_root = str(pathlib.Path(__file__).resolve().parents[1])
 if _repo_root not in sys.path:
     sys.path.insert(0, _repo_root)
 
-# Remove the script's own directory from sys.path.  When running
-# ``python path/to/command.py`` Python auto-adds the script's directory
-# (i.e. ``.../ida_mcp/``) to sys.path[0].  This causes subpackages like
-# ``ida_mcp/http/`` to shadow the stdlib ``http`` package, breaking
-# ``import http.client``, ``import urllib.request``, etc.
 _script_dir = str(pathlib.Path(__file__).resolve().parent)
 sys.path = [p for p in sys.path if p != _script_dir]
-
-from ida_mcp import control
-from ida_mcp.utils import display_path as _display_path
 
 
 EXIT_OK = 0
@@ -37,415 +43,253 @@ def _dump_json(payload: Any) -> None:
     print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
 
 
-def _exit_code_from_payload(payload: dict[str, Any], default: int = EXIT_OK) -> int:
-    error = payload.get("error")
-    if not isinstance(error, dict):
-        return default
-    code = error.get("code")
-    if code in {
-        "invalid_port",
-        "invalid_json",
-        "invalid_params",
-    }:
-        return EXIT_USAGE
-    if code in {
-        "gateway_unavailable",
-        "fastmcp_missing",
-        "instance_not_found",
-        "no_instances",
-        "resource_read_failed",
-        "resource_list_failed",
-    }:
-        return EXIT_UNAVAILABLE
-    return EXIT_ERROR
+def _resolve_entry(instance_id: Optional[str]):
+    """Pick a live instance: by id, else latest started."""
+    from . import bridge_client, instances
+
+    if instance_id:
+        entry = instances.find_by_id(instance_id)
+        if entry is None or not bridge_client.is_alive(entry):
+            print(f"Error: instance {instance_id} not found or unreachable.")
+            return None
+        return entry
+    live = [e for e in instances.list_live_instances() if bridge_client.is_alive(e)]
+    if not live:
+        print("Error: no live IDA instance. Run `idamcp open <path>` first.")
+        return None
+    return live[-1]
 
 
-def _print_gateway_status(payload: dict[str, Any]) -> None:
-    gateway = payload.get("gateway", {})
-    gateway_proxy = payload.get("gateway_proxy", {})
-    gateway_internal = payload.get("gateway_internal", {})
-    gateway_host = gateway_internal.get("bind_host") or gateway_internal.get("host")
-    gateway_port = gateway_internal.get("port")
-    print(
-        f"Gateway: {'running' if gateway.get('alive') else 'stopped'} "
-        f"at {gateway_host}:{gateway_port}"
-    )
-    if gateway.get("log"):
-        print(f"Gateway log: {_display_path(gateway['log'])}")
-    if gateway.get("last_error"):
-        print(f"Gateway error: {gateway['last_error']}")
-    proxy_host = gateway_proxy.get("bind_host") or gateway_proxy.get("host")
-    proxy_port = gateway_proxy.get("port")
-    proxy_path = gateway_proxy.get("path")
-    print(
-        f"Gateway proxy: {'running' if gateway_proxy.get('alive') else 'stopped'} "
-        f"at {proxy_host}:{proxy_port}{proxy_path}"
-    )
-    if gateway_proxy.get("last_error"):
-        print(f"Gateway proxy error: {gateway_proxy['last_error']}")
-    print(f"Registered instances: {payload.get('count', 0)}")
+# ============================================================================
+# Serve commands
+# ============================================================================
 
 
-def _print_instances(payload: dict[str, Any]) -> None:
-    if not payload["gateway_alive"]:
-        print("Gateway is not running.")
-        return
-    if not payload["instances"]:
-        print("No registered IDA instances.")
-        return
-    for entry in payload["instances"]:
-        port = entry.get("port")
-        pid = entry.get("pid")
-        input_file = _display_path(entry.get("input_file")) or "<unknown>"
-        print(f"pid={pid} port={port} input={input_file}")
+def _cmd_stdio(_args: argparse.Namespace) -> int:
+    from . import mcp_server
 
-
-def _print_error(payload: dict[str, Any]) -> None:
-    error = payload.get("error")
-    if not isinstance(error, dict):
-        print("Operation failed.")
-        return
-    print(
-        f"Error [{error.get('code', 'unknown')}]: {error.get('message', 'unknown error')}"
-    )
-    details = error.get("details")
-    if details:
-        print(json.dumps(details, indent=2, ensure_ascii=False, default=str))
-
-
-def _print_select(payload: dict[str, Any]) -> None:
-    instance = payload.get("instance") or {}
-    print(f"Selected port: {payload['selected_port']}")
-    if instance:
-        print(f"PID: {instance.get('pid')}")
-        print(f"Input: {_display_path(instance.get('input_file')) or '<unknown>'}")
-
-
-def _print_data_payload(payload: dict[str, Any]) -> None:
-    if "data" in payload:
-        _dump_json(payload["data"])
-        return
-    _dump_json(payload)
-
-
-def _cmd_gateway_start(args: argparse.Namespace) -> int:
-    payload = control.ensure_gateway_running(
-        startup_timeout=args.timeout,
-        force=args.force,
-    )
-    if args.json or "error" in payload:
-        _dump_json(payload)
-    else:
-        _print_gateway_status(payload)
-    return _exit_code_from_payload(payload)
-
-
-def _cmd_gateway_stop(args: argparse.Namespace) -> int:
-    payload = control.shutdown_gateway(force=args.force, timeout=args.timeout)
-    if args.json or "error" in payload:
-        _dump_json(payload)
-    else:
-        print(payload.get("message", "Gateway shutdown requested"))
-    if "error" in payload and not args.force:
-        print("Tip: use --force to force-kill the gateway process when shutdown fails.")
-    return _exit_code_from_payload(payload)
-
-
-def _cmd_gateway_restart(args: argparse.Namespace) -> int:
-    payload = control.restart_gateway(startup_timeout=args.timeout, force=args.force)
-    if args.json or "error" in payload:
-        _dump_json(payload)
-    else:
-        _print_gateway_status(payload)
-    return _exit_code_from_payload(payload)
-
-
-def _cmd_gateway_status(args: argparse.Namespace) -> int:
-    payload = control.gateway_status_payload()
-    if args.json:
-        _dump_json(payload)
-    else:
-        _print_gateway_status(payload)
+    mcp_server.serve_stdio()
     return EXIT_OK
 
 
-def _cmd_ida_open(args: argparse.Namespace) -> int:
-    payload = control.open_ida(
+# ============================================================================
+# Instance commands
+# ============================================================================
+
+
+def _cmd_instances_list(args: argparse.Namespace) -> int:
+    from . import bridge_client, instances
+
+    entries = [
+        e for e in instances.list_live_instances() if bridge_client.is_alive(e)
+    ]
+    if args.json:
+        _dump_json(entries)
+        return EXIT_OK
+    if not entries:
+        print("No live IDA instances.")
+        return EXIT_OK
+    for entry in entries:
+        headless = "headless" if entry.get("headless") else "gui"
+        input_file = entry.get("input_file") or "<unknown>"
+        print(
+            f"{entry.get('instance_id')}  pid={entry.get('pid')} "
+            f"port={entry.get('port')} [{headless}] {input_file}"
+        )
+    return EXIT_OK
+
+
+def _cmd_open(args: argparse.Namespace) -> int:
+    from . import lifecycle
+
+    headless = "gui" if args.gui else "auto"
+    result = lifecycle.open_database(
         args.file_path,
-        extra_args=args.extra_arg or None,
+        set_current=False,
+        headless=headless,
+        wait_for_analysis=not args.no_wait,
+        timeout=args.timeout,
     )
-    if args.json or "error" in payload:
-        _dump_json(payload)
-    else:
-        print(payload.get("message", "IDA launch requested"))
-        if payload.get("requested_port") is not None:
-            print(f"Requested port: {payload['requested_port']}")
-    return _exit_code_from_payload(payload)
-
-
-def _cmd_ida_close(args: argparse.Namespace) -> int:
-    payload = control.close_ida(save=args.save, port=args.port, timeout=args.timeout)
-    if args.json or "error" in payload:
-        _dump_json(payload)
-    else:
-        print(f"Close requested for port {payload['selected_port']}")
-        _print_data_payload(payload)
-    return _exit_code_from_payload(payload)
-
-
-def _cmd_ida_list(args: argparse.Namespace) -> int:
-    payload = control.list_ida_instances()
-    if args.json:
-        _dump_json(payload)
-    else:
-        _print_instances(payload)
+    if "error" in result:
+        print(f"Error: {result['error']}")
+        return EXIT_ERROR
+    instance = result.get("instance") or {}
+    print(
+        f"{result.get('status')} ({result.get('mode', 'attached')}): "
+        f"instance {instance.get('instance_id')} pid={instance.get('pid')} "
+        f"port={instance.get('port')}"
+    )
+    print(f"input: {instance.get('input_file')}")
+    print(f"database: {instance.get('database_path')}")
     return EXIT_OK
 
 
-def _cmd_ida_select(args: argparse.Namespace) -> int:
-    payload = control.select_target_port(args.port)
-    if args.json or "error" in payload:
-        _dump_json(payload)
-    else:
-        _print_select(payload)
-    return _exit_code_from_payload(payload)
+def _cmd_close(args: argparse.Namespace) -> int:
+    from . import lifecycle
+
+    entry = _resolve_entry(args.id)
+    if entry is None:
+        return EXIT_UNAVAILABLE
+    result = lifecycle.close_database(
+        entry, terminate=args.terminate, save=not args.no_save
+    )
+    _dump_json(result)
+    return EXIT_ERROR if result.get("status") == "error" else EXIT_OK
 
 
-def _parse_params(text: str) -> dict[str, Any]:
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"Invalid JSON for --params: {exc}") from exc
-    if not isinstance(data, dict):
-        raise ValueError("--params must decode to a JSON object")
-    return data
+def _cmd_save(args: argparse.Namespace) -> int:
+    from . import lifecycle
+
+    entry = _resolve_entry(args.id)
+    if entry is None:
+        return EXIT_UNAVAILABLE
+    _dump_json(lifecycle.save_database(entry))
+    return EXIT_OK
 
 
 def _cmd_tool_call(args: argparse.Namespace) -> int:
+    from . import bridge_client
+
+    entry = _resolve_entry(args.id)
+    if entry is None:
+        return EXIT_UNAVAILABLE
     try:
-        params = _parse_params(args.params)
-    except ValueError as exc:
-        payload = control.error_payload("invalid_json", str(exc))
-        _dump_json(payload)
+        params = json.loads(args.params) if args.params else {}
+        if not isinstance(params, dict):
+            raise ValueError("--params must decode to a JSON object")
+    except json.JSONDecodeError as exc:
+        print(f"Error: invalid JSON for --params: {exc}")
         return EXIT_USAGE
 
-    payload = control.call_tool(
-        args.tool_name, params=params, port=args.port, timeout=args.timeout
-    )
-    if args.json or "error" in payload:
-        _dump_json(payload)
-    else:
-        print(f"Tool: {args.tool_name}")
-        print(f"Port: {payload['selected_port']}")
-        _print_data_payload(payload)
-    return _exit_code_from_payload(payload)
+    try:
+        result = bridge_client.call_tool(entry, args.tool_name, params, timeout=args.timeout)
+    except Exception as exc:  # noqa: BLE001 - CLI boundary
+        _dump_json(bridge_client.describe_error(exc))
+        return EXIT_ERROR
+    _dump_json(result)
+    return EXIT_OK
 
 
-def _cmd_resource_read(args: argparse.Namespace) -> int:
-    payload = control.read_resource(args.uri, port=args.port, timeout=args.timeout)
-    if args.json or "error" in payload:
-        _dump_json(payload)
-    else:
-        print(f"Resource: {payload['uri']}")
-        print(f"Port: {payload['selected_port']}")
-        _print_data_payload(payload)
-    return _exit_code_from_payload(payload)
+def _cmd_reference(args: argparse.Namespace) -> int:
+    from .idapython_docs import DocsIndex, format_entries
+
+    entry = _resolve_entry(args.id)
+    if entry is None:
+        return EXIT_UNAVAILABLE
+
+    def fetch_modules():
+        from . import bridge_client
+
+        return bridge_client.docs_modules(entry)
+
+    def fetch_snapshot(name: str):
+        from . import bridge_client
+
+        return bridge_client.docs_snapshot(entry, name)
+
+    index = DocsIndex()
+    print(f"Indexing IDAPython modules from instance {entry.get('instance_id')}...", file=sys.stderr)
+    index.build(fetch_modules, fetch_snapshot)
+    print(f"Indexed {index.size} entries.", file=sys.stderr)
+    if args.query.strip().lower() in {"modules", "list modules", "module list"}:
+        _dump_json(index.module_summary())
+        return EXIT_OK
+    print(format_entries(index.search(args.query, module=args.module), args.query))
+    return EXIT_OK
 
 
-def _cmd_resource_list(args: argparse.Namespace) -> int:
-    payload = control.list_resources(port=args.port, timeout=args.timeout)
-    if args.json or "error" in payload:
-        _dump_json(payload)
-    else:
-        print(f"Port: {payload['selected_port']}")
-        print(f"Total resources: {payload['total']}")
-        _dump_json(
-            {
-                "resources": payload.get("resources", []),
-                "templates": payload.get("templates", []),
-            }
-        )
-    return _exit_code_from_payload(payload)
+def _cmd_config_show(_args: argparse.Namespace) -> int:
+    from . import config
+
+    _dump_json(config.load_config(reload=True))
+    return EXIT_OK
+
+
+# ============================================================================
+# Parser
+# ============================================================================
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="IDA-MCP command-line helper")
+    parser = argparse.ArgumentParser(
+        prog="idamcp",
+        description="IDA-MCP: stdio MCP server + instance CLI",
+    )
     subparsers = parser.add_subparsers(dest="command")
 
-    gateway_parser = subparsers.add_parser(
-        "gateway", help="Manage the standalone gateway"
+    stdio = subparsers.add_parser(
+        "stdio", help="Serve MCP over stdin/stdout (default command)"
     )
-    gateway_subparsers = gateway_parser.add_subparsers(dest="gateway_command")
+    stdio.set_defaults(handler=_cmd_stdio)
 
-    gateway_start = gateway_subparsers.add_parser(
-        "start", help="Start the standalone gateway"
-    )
-    gateway_start.add_argument(
-        "--force",
-        action="store_true",
-        help="Reclaim a stale IDA-MCP gateway listener before starting",
-    )
-    gateway_start.add_argument(
-        "--timeout",
-        type=float,
-        default=None,
-        help="Startup timeout in seconds (default: configured request_timeout)",
-    )
-    gateway_start.add_argument("--json", action="store_true", help="Print JSON output")
-    gateway_start.set_defaults(handler=_cmd_gateway_start)
-
-    gateway_stop = gateway_subparsers.add_parser(
-        "stop", help="Stop the standalone gateway"
-    )
-    gateway_stop.add_argument(
-        "--force",
-        action="store_true",
-        help="Force stop even if instances are registered; force-kill the process when graceful shutdown fails",
-    )
-    gateway_stop.add_argument(
-        "--timeout", type=float, default=None, help="Shutdown timeout in seconds"
-    )
-    gateway_stop.add_argument("--json", action="store_true", help="Print JSON output")
-    gateway_stop.set_defaults(handler=_cmd_gateway_stop)
-
-    gateway_restart = gateway_subparsers.add_parser(
-        "restart", help="Restart the standalone gateway"
-    )
-    gateway_restart.add_argument(
-        "--force",
-        action="store_true",
-        help="Force stop even if instances are registered",
-    )
-    gateway_restart.add_argument(
-        "--timeout",
-        type=float,
-        default=None,
-        help="Restart timeout in seconds (default: configured request_timeout)",
-    )
-    gateway_restart.add_argument(
-        "--json", action="store_true", help="Print JSON output"
-    )
-    gateway_restart.set_defaults(handler=_cmd_gateway_restart)
-
-    gateway_status = gateway_subparsers.add_parser("status", help="Show gateway status")
-    gateway_status.add_argument("--json", action="store_true", help="Print JSON output")
-    gateway_status.set_defaults(handler=_cmd_gateway_status)
-
-    ida_parser = subparsers.add_parser("ida", help="Manage IDA instances")
-    ida_subparsers = ida_parser.add_subparsers(dest="ida_command")
-
-    ida_open = ida_subparsers.add_parser("open", help="Launch IDA with a file")
-    ida_open.add_argument("file_path", help="Path to the file or IDB to open")
-    ida_open.add_argument(
-        "--extra-arg",
-        action="append",
-        default=[],
-        help="Extra argument to pass to IDA (repeatable)",
-    )
-    ida_open.add_argument("--json", action="store_true", help="Print JSON output")
-    ida_open.set_defaults(handler=_cmd_ida_open)
-
-    ida_close = ida_subparsers.add_parser("close", help="Close an IDA instance")
-    ida_close.add_argument(
-        "--port", type=int, default=None, help="Target instance port"
-    )
-    ida_close.add_argument(
-        "--timeout", type=int, default=None, help="Timeout in seconds"
-    )
-    ida_close.add_argument(
-        "--save",
-        dest="save",
-        action="store_true",
-        default=True,
-        help="Save IDB before closing",
-    )
-    ida_close.add_argument(
-        "--no-save",
-        dest="save",
-        action="store_false",
-        help="Do not save IDB before closing",
-    )
-    ida_close.add_argument("--json", action="store_true", help="Print JSON output")
-    ida_close.set_defaults(handler=_cmd_ida_close)
-
-    ida_list = ida_subparsers.add_parser("list", help="List registered IDA instances")
-    ida_list.add_argument("--json", action="store_true", help="Print JSON output")
-    ida_list.set_defaults(handler=_cmd_ida_list)
-
-    ida_select = ida_subparsers.add_parser(
-        "select", help="Select or validate a target instance port"
-    )
-    ida_select.add_argument(
-        "--port", type=int, default=None, help="Target instance port"
-    )
-    ida_select.add_argument("--json", action="store_true", help="Print JSON output")
-    ida_select.set_defaults(handler=_cmd_ida_select)
-
-    instances_parser = subparsers.add_parser(
-        "instances", help="Alias for ida instance inspection"
-    )
-    instances_subparsers = instances_parser.add_subparsers(dest="instances_command")
-    instances_list = instances_subparsers.add_parser(
-        "list", help="List registered IDA instances"
-    )
+    instances_parser = subparsers.add_parser("instances", help="Inspect live IDA instances")
+    instances_sub = instances_parser.add_subparsers(dest="instances_command")
+    instances_list = instances_sub.add_parser("list", help="List live IDA instances")
     instances_list.add_argument("--json", action="store_true", help="Print JSON output")
-    instances_list.set_defaults(handler=_cmd_ida_list)
+    instances_list.set_defaults(handler=_cmd_instances_list)
 
-    tool_parser = subparsers.add_parser(
-        "tool", help="Direct tool invocation via the gateway"
+    open_parser = subparsers.add_parser(
+        "open", help="Open/attach a binary or .i64 (headless idalib worker by default)"
     )
-    tool_subparsers = tool_parser.add_subparsers(dest="tool_command")
+    open_parser.add_argument("file_path", help="Path to the executable or IDB")
+    open_parser.add_argument(
+        "--gui", action="store_true",
+        help="Launch the IDA GUI instead of a headless worker",
+    )
+    open_parser.add_argument(
+        "--no-wait", action="store_true", help="Do not wait for auto-analysis"
+    )
+    open_parser.add_argument(
+        "--timeout", type=int, default=300, help="Open timeout in seconds (default 300)"
+    )
+    open_parser.set_defaults(handler=_cmd_open)
 
-    tool_call = tool_subparsers.add_parser("call", help="Call a proxy tool directly")
+    close_parser = subparsers.add_parser("close", help="Close/detach an IDA instance")
+    close_parser.add_argument("--id", default=None, help="Instance id (default: latest)")
+    close_parser.add_argument(
+        "--terminate", action="store_true", help="Also close GUI instances"
+    )
+    close_parser.add_argument(
+        "--no-save", action="store_true", help="Do not save the database before closing"
+    )
+    close_parser.set_defaults(handler=_cmd_close)
+
+    save_parser = subparsers.add_parser("save", help="Save an instance database")
+    save_parser.add_argument("--id", default=None, help="Instance id (default: latest)")
+    save_parser.set_defaults(handler=_cmd_save)
+
+    tool_parser = subparsers.add_parser("tool", help="Direct tool invocation")
+    tool_sub = tool_parser.add_subparsers(dest="tool_command")
+    tool_call = tool_sub.add_parser("call", help="Call one backend tool")
     tool_call.add_argument("tool_name", help="Tool name")
-    tool_call.add_argument(
-        "--port", type=int, default=None, help="Target instance port"
-    )
-    tool_call.add_argument(
-        "--timeout", type=int, default=None, help="Timeout in seconds"
-    )
-    tool_call.add_argument(
-        "--params", default="{}", help="Tool params as a JSON object"
-    )
-    tool_call.add_argument("--json", action="store_true", help="Print JSON output")
+    tool_call.add_argument("--id", default=None, help="Instance id (default: latest)")
+    tool_call.add_argument("--timeout", type=int, default=None, help="Timeout in seconds")
+    tool_call.add_argument("--params", default="{}", help="Tool params as a JSON object")
     tool_call.set_defaults(handler=_cmd_tool_call)
 
-    resource_parser = subparsers.add_parser(
-        "resource", help="Read direct-instance MCP resources"
+    reference = subparsers.add_parser(
+        "reference", help="Search the official IDAPython documentation"
     )
-    resource_subparsers = resource_parser.add_subparsers(dest="resource_command")
+    reference.add_argument("query", help="Class, function, or concept (or 'modules')")
+    reference.add_argument("--module", default=None, help="Restrict to one module")
+    reference.add_argument("--id", default=None, help="Instance id (default: latest)")
+    reference.set_defaults(handler=_cmd_reference)
 
-    resource_read = resource_subparsers.add_parser(
-        "read", help="Read a resource from a direct instance"
-    )
-    resource_read.add_argument("uri", help="Resource URI to read")
-    resource_read.add_argument(
-        "--port", type=int, default=None, help="Target instance port"
-    )
-    resource_read.add_argument(
-        "--timeout", type=int, default=None, help="Timeout in seconds"
-    )
-    resource_read.add_argument("--json", action="store_true", help="Print JSON output")
-    resource_read.set_defaults(handler=_cmd_resource_read)
-
-    resource_list = resource_subparsers.add_parser(
-        "list", help="List direct-instance resources"
-    )
-    resource_list.add_argument(
-        "--port", type=int, default=None, help="Target instance port"
-    )
-    resource_list.add_argument(
-        "--timeout", type=int, default=None, help="Timeout in seconds"
-    )
-    resource_list.add_argument("--json", action="store_true", help="Print JSON output")
-    resource_list.set_defaults(handler=_cmd_resource_list)
+    config_parser = subparsers.add_parser("config", help="Inspect configuration")
+    config_sub = config_parser.add_subparsers(dest="config_command")
+    config_show = config_sub.add_parser("show", help="Print the effective configuration")
+    config_show.set_defaults(handler=_cmd_config_show)
 
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if not arguments:
+        # No arguments: serve MCP over stdio.
+        arguments = ["stdio"]
     parser = build_parser()
-    args = parser.parse_args(list(argv) if argv is not None else None)
+    args = parser.parse_args(arguments)
     handler = getattr(args, "handler", None)
     if handler is None:
         parser.print_help()
@@ -453,8 +297,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         return int(handler(args))
     except KeyboardInterrupt:
-        payload = control.error_payload("interrupted", "Command interrupted.")
-        _print_error(payload)
+        print("Interrupted.")
         return EXIT_ERROR
 
 

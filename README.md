@@ -1,377 +1,153 @@
 # IDA-MCP
 
-IDA-MCP is an IDA Pro plugin that exposes IDA analysis, database modification,
-debugger, and lifecycle operations through MCP. Each IDA instance runs a local
-FastMCP HTTP server, and a standalone gateway provides a stable
-multi-instance MCP endpoint.
-
-## Layout
+IDA Pro 的 MCP（Model Context Protocol）服务器：**stdio 传输**、无头 idalib worker、
+多实例生命周期管理与官方 IDAPython 文档查询。架构参考
+[HexRaysSA/ida-mcp](https://github.com/HexRaysSA/ida-mcp)，工具目录为本项目自有
+的反汇编/反编译/修改/调试全量 API（93 个工具）。
 
 ```text
-IDA-MCP/
-├── ida_mcp.py          # IDA plugin entry point, exposes PLUGIN_ENTRY()
-├── ida-plugin.json     # IDA plugin metadata
-├── ida_mcp/            # plugin package, gateway, proxy, tools, resources
-├── install.py          # interactive installer
-├── test/               # live-IDA pytest suite
-├── API.md              # MCP, tool, resource, and internal HTTP contract
-├── project.md          # repository map and boundaries
-├── roadmap.md          # current direction and milestones
-└── requirements.txt    # IDA Python runtime dependencies
+MCP 客户端 ──stdio──▶ idamcp 独立进程
+                        │  ├─ 实例发现：<IDAUSR>/ida-mcp/instances.json
+                        │  └─ 直连各 IDA 进程内的 JSON-RPC 桥（无网关、无端口注册转发）
+                        ▼
+             GUI IDA（插件桥）  +  无头 idalib worker（自动创建/分析 .i64）
 ```
 
-## Runtime Model
+## 核心特性
 
-- IDA loads `ida_mcp.py`, which starts `ida_mcp/plugin_runtime.py`.
-- Each IDA instance chooses a free port starting at `ida_default_port` and serves MCP at `/mcp/`.
-- The standalone gateway listens on `127.0.0.1:11338`, registers instances under `/internal/*`, and exposes the proxy MCP endpoint at `/mcp`.
-- Tool registration is decorator based: use `@tool` plus `@idaread` or `@idawrite`.
-- Loopback gateway requests (`127.0.0.1` / `::1`) do not require `gateway_token`; non-loopback requests require a matching token and fail closed when it is empty.
-- `py_eval`, `patch_bytes`, `apply_patch`, and `dbg_*` tools are unsafe and gated by `enable_unsafe=false` by default in `ida_mcp/config.conf`.
+- **stdio 唯一传输**（`uvx idamcp stdio`）。HTTP/网关/端口注册转发机制已删除。
+- **open_database**：附加已打开的 GUI 实例，或启动**无头 idalib worker**（自动创建并分析
+  .i64），或显式 `headless="gui"` 拉起 GUI。
+- **多实例**：`list_databases / select_database / save_database / close_database`，
+  官方式 instance_id 语义；无头 worker 随最后一个使用者关闭（默认先保存）。
+- **官方 IDAPython 文档**：`ida_python_reference(query)` 基于当前 IDA 运行时构建
+  BM25 索引（约 2 万条 API 签名 + 文档字符串），版本永远匹配。
+- **IDA 进程内零第三方依赖**：桥为纯标准库实现，不再向 IDAPython 安装
+  fastmcp/uvicorn 等包。
 
-## Installation
+## 安装
 
-Requirements:
-
-- Python > 3.11
-
-### Install with HCLI
-
-Install the packaged plugin archive attached to the latest GitHub Release:
+### 1. IDA 插件（GUI 附加用；纯无头可跳过）
 
 ```bash
+python install.py            # 复制 ida_mcp.py + ida_mcp/ 到 IDA plugins 目录
+# 或
 hcli plugin install https://github.com/Captain-AI-Hub/IDA-MCP/releases/latest/download/main.zip
 ```
 
-Alternatively, install from a local checkout with machine-aware path detection:
+插件加载后桥自动启动：固定监听 `127.0.0.1`（端口自 13337 向上递增），
+并登记到 `~/.idapro/ida-mcp/instances.json`，无需任何配置。
+
+### 2. 独立 MCP 服务器
 
 ```bash
-git clone https://github.com/Captain-AI-Hub/IDA-MCP.git
-cd IDA-MCP
-python scripts/package_hcli.py --output dist/main.zip
-python scripts/hcli_install.py dist/main.zip
+# 无需克隆，直接从 GitHub 运行（也可换成任意 ref / 本地路径）：
+uvx --from git+https://github.com/Captain-AI-Hub/IDA-MCP idamcp stdio
+# 发布到 PyPI 后的简写：
+uvx idamcp stdio
+# 或从源码：
+python -m ida_mcp stdio
 ```
 
-The wrapper asks for or detects the IDA executable, probes that installation's
-`idat` runtime, and falls back to parsing `idapyswitch` only when the runtime
-probe is unavailable. It then sets `HCLI_CURRENT_IDA_PYTHON_EXE` while launching
-HCLI, so dependency installation cannot fall back to HCLI's/system Python. The
-wrapper uses the detected interpreter internally; the direct HCLI install does
-not prompt for or overwrite `ida_python`:
+发布到 PyPI 后，客户端配置简化为：
 
-```text
-IDAPython interpreter path (C:\Users\name\AppData\Local\Python\pythoncore-3.12-64\python.exe)
+```json
+{ "mcpServers": { "ida-mcp": { "command": "uvx", "args": ["idamcp", "stdio"] } } }
 ```
 
-Specify IDA explicitly when automatic discovery selects the wrong installation:
+**发布方式**：`uv build` 产出 wheel/sdist，`uv publish`（或推送 `v*` tag 触发
+`.github/workflows/pypi-publish.yml`，支持 PyPI trusted publisher / API token）。
+包名 `idamcp`，发布后 `uvx idamcp stdio` 即开即用。
 
-```bash
-python scripts/hcli_install.py dist/main.zip --ida D:\IDAPro9.4\ida.exe
-```
-
-On Linux, the wrapper also reads `$IDAUSR/ida-config.json` (default:
-`~/.idapro/ida-config.json`) and searches common `/opt`, home, and local
-application paths. To use HCLI directly while forcing a known IDAPython
-interpreter, set the override explicitly:
-
-```bash
-HCLI_CURRENT_IDA_PYTHON_EXE=/path/to/idapython/bin/python3 \
-  hcli plugin install https://github.com/Captain-AI-Hub/IDA-MCP/releases/latest/download/main.zip
-```
-
-If IDAPython cannot be detected, `scripts/hcli_install.py` stops instead of
-allowing dependency installation through the system Python. The wrapper also
-generates a per-install token and prints a copy/paste-ready `mcp.json`. This does
-not apply to the direct URL form: `hcli plugin install ...` does not execute
-IDA-MCP, so it cannot generate or print a machine-specific token during
-installation.
-
-For plugin development, use `hcli plugin install --editable .` so source changes
-are picked up without reinstalling. HCLI installs the plugin files and Python
-runtime dependencies declared in `ida-plugin.json`. Dependency resolution can
-take a while on the first installation and may produce little output; wait for
-the final `Installed plugin` message.
-
-Starting with v0.6.3, HCLI prompts for the IDA executable, IDAPython
-interpreter, automatic instance startup, gateway host/port/path, autonomous
-launch mode, unsafe-tool policy, request timeout, and debug logging. The
-IDAPython default remains `auto`, but the prompt is retained because detection
-can be wrong for non-standard IDA layouts. `auto_start` is also prompted and
-defaults to `No`. The hidden gateway lifecycle action defaults to `idle`, so a
-fresh installation performs no server startup unless requested.
-
-## Get the gateway token and configure an MCP client
-
-`hcli plugin install` only installs the plugin metadata, files, and Python
-dependencies. It does not load IDA-MCP, so the install command cannot generate
-or print the machine-specific gateway token.
-
-### 1. Generate the token on the first IDA launch
-
-After installation:
-
-1. Start IDA and open a database.
-2. Wait for IDA-MCP to load.
-3. On its first load, IDA-MCP generates a random gateway token and shows it in
-   the IDA output window and, in interactive mode, a dialog.
-4. Copy the displayed token and the generated MCP client configuration.
-
-Retrieve a previously generated token with:
-
-```bash
-hcli plugin config IDA-MCP get gateway_token
-```
-
-If this command returns `__AUTO_GENERATE_GATEWAY_TOKEN__`, IDA-MCP has not
-completed first-launch initialization, or it could not write to the HCLI
-settings store. Start IDA and check the IDA output window. If IDA-MCP reports
-that it saved the token to `ida_mcp/config.conf`, use the token displayed in IDA
-or read it from that installed plugin configuration file.
-
-To set your own token, use a random value of at least 20 characters:
-
-```bash
-hcli plugin config IDA-MCP set gateway_token YOUR_RANDOM_TOKEN
-```
-
-Do not commit a real gateway token to a repository or paste it into public logs.
-
-### 2. Start IDA-MCP when automatic startup is disabled
-
-`auto_start` defaults to `No`. Open the target database and run the IDA-MCP
-plugin once from IDA to start its instance server. Start the standalone gateway
-with:
-
-```bash
-hcli plugin config IDA-MCP set gateway start
-```
-
-To enable automatic instance startup later:
-
-```bash
-hcli plugin config IDA-MCP set auto_start true
-```
-
-The default gateway MCP endpoint is:
-
-```text
-http://127.0.0.1:11338/mcp
-```
-
-If you changed `http_host`, `http_port`, or `http_path` during installation,
-use those values instead.
-
-### 3. Claude Code and Cursor `mcpServers` format
-
-Claude Code project configuration uses `.mcp.json` in the project root. Cursor
-uses `.cursor/mcp.json` for a project or `~/.cursor/mcp.json` globally. These
-clients use the common top-level `mcpServers` object:
+MCP 客户端配置（HCLI/安装器安装完成后打印同款，可直接复制）：
 
 ```json
 {
   "mcpServers": {
     "ida-mcp": {
-      "type": "http",
-      "url": "http://127.0.0.1:11338/mcp",
-      "headers": {
-        "Authorization": "Bearer REPLACE_WITH_GATEWAY_TOKEN"
-      }
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/Captain-AI-Hub/IDA-MCP", "idamcp", "stdio"]
     }
   }
 }
 ```
 
-IDA-MCP also accepts the following header as an alternative:
+### 3. 无头 worker 的 Python（idalib）
 
-```json
-{
-  "X-IDA-MCP-Token": "REPLACE_WITH_GATEWAY_TOKEN"
-}
-```
+无头 `open_database` 需要一个 **`import idapro` 可用** 的 Python。检测顺序：
 
-Use one authentication header; `Authorization: Bearer ...` is recommended for
-normal HTTP MCP clients.
+1. 配置 `idalib_python`
+2. 配置/检测的 `ida_python`
+3. `~/.idapro/ida-config.json` 中 `ida-install-dir` 下的 `ida-python`（自编译运行时）
+4. `<state>/idalib-venv` 与 `~/.idapro/venv`
 
-For Claude Code, avoid storing the token directly in a project `.mcp.json` by
-using an environment variable. Claude Code expands `${VAR}` in HTTP URLs and
-headers:
+首次探测成功会写入用户级配置 `~/.idapro/ida-mcp/config.conf` 缓存。
+若还没有激活的运行时：`pip install <IDA>/idalib/python/idapro-*.whl` 后运行
+`python <IDA>/py-activate-idalib.py`。
 
-```bash
-export IDA_MCP_TOKEN='YOUR_GATEWAY_TOKEN'
-```
+> **关于 `~/.idapro/venv` 一直没生效**：IDA 通过 idapyswitch 选定的
+> `libpython3.12.so`（注册于 `~/.idapro/ida.reg` 的 `Python3TargetDLL`）加载
+> Python，不读取任何 venv；venv 本身也没有自己的 libpython，所以对 IDA 永远
+> 不可见，也不存在“每次激活”一说。对 IDA 唯一生效的是 `Python3TargetDLL`
+> 指向的那套安装。新架构下 IDA 内零依赖，该问题不复存在；这个 venv 仅当其中
+> 装有 idapro 包时才会被选作无头 worker 解释器。
 
-```json
-{
-  "mcpServers": {
-    "ida-mcp": {
-      "type": "http",
-      "url": "http://127.0.0.1:11338/mcp",
-      "headers": {
-        "Authorization": "Bearer ${IDA_MCP_TOKEN}"
-      }
-    }
-  }
-}
-```
-
-The equivalent Claude Code CLI command is:
+## CLI
 
 ```bash
-claude mcp add --transport http ida-mcp http://127.0.0.1:11338/mcp \
-  --header "Authorization: Bearer $IDA_MCP_TOKEN"
+idamcp                      # = idamcp stdio
+idamcp instances list       # 列出活跃实例（GUI + 无头）
+idamcp open <path> [--gui]  # 附加或无头打开（自动创建/分析 .i64）
+idamcp close [--id ID] [--terminate]
+idamcp save [--id ID]
+idamcp tool call <name> --params '{"addr":"main"}'
+idamcp reference "decompile function" [--module ida_funcs]
+idamcp config show
 ```
 
-For Cursor, if environment-variable interpolation is unavailable in the client
-version being used, place the literal token only in the personal global file
-`~/.cursor/mcp.json`; do not commit that file.
+## 配置
 
-### 4. VS Code `.vscode/mcp.json` format
+`ida_mcp/config.conf`（包内）与 `~/.idapro/ida-mcp/config.conf`（用户级，优先生效），
+仅 5 个键：`ida_path`（GUI 启动）、`ida_python` / `idalib_python`、`request_timeout`、
+`debug`。前三个路径在 **install.py / hcli_install.py 安装时自动探测**并写入用户级
+配置（首启时也会兜底重探测），日常无需手工配置。
+实例桥固定 `127.0.0.1:13337+` 且插件自动启动，无需配置。
+环境变量覆盖：`IDA_MCP_CONFIG_<KEY>`。
 
-VS Code uses a top-level `servers` object rather than `mcpServers`. The example
-below prompts for the token and stores it in VS Code's input/secret flow instead
-of committing it to the workspace file:
+## 工具面
 
-```json
-{
-  "inputs": [
-    {
-      "id": "ida-mcp-token",
-      "type": "promptString",
-      "description": "IDA-MCP gateway token",
-      "password": true
-    }
-  ],
-  "servers": {
-    "ida-mcp": {
-      "type": "http",
-      "url": "http://127.0.0.1:11338/mcp",
-      "headers": {
-        "Authorization": "Bearer ${input:ida-mcp-token}"
-      }
-    }
-  }
-}
+- 生命周期：`open_database`、`list_databases`、`select_database`、
+  `save_database`、`close_database`、`check_connection`
+- 文档：`ida_python_reference(query, module=None)`
+- 后端目录（93 个，每个都可带 `instance_id` 覆盖目标）：反编译/反汇编/xref/搜索/
+  重命名/注释/patch/类型/结构体/栈帧/内存/`py_eval`/`dbg_*` 等全量开放，见 [API.md](API.md)。
+
+## 运行时边界
+
+- IDA 运行时：所有 SDK 调用经 `@idaread/@idawrite` 在 IDA 主线程执行
+  （GUI 用 `execute_sync`；idalib worker 由主线程队列串行执行）。
+- 独立进程：任何 Python ≥3.11；fastmcp 4.x；不接触 IDA SDK。
+- 测试：`pytest`——无可用 IDA/idalib 时后端测试自动跳过；本机有 idalib 时会
+  无头启动 `test/samples/complex.exe` 实例实测（`--ida-open-timeout` 可调）。
+
+## 布局
+
+```text
+IDA-MCP/
+├── ida_mcp.py          # IDA 插件入口（PLUGIN_ENTRY）
+├── ida-plugin.json     # HCLI 插件元数据
+├── ida_mcp/
+│   ├── bridge_server.py   # 实例内 JSON-RPC 桥（纯标准库）
+│   ├── worker.py          # 无头 idalib worker 进程
+│   ├── mcp_server.py      # 独立 stdio MCP 服务器
+│   ├── instances.py       # 共享 JSON 实例清单
+│   ├── lifecycle.py       # open/close/save/attach 生命周期
+│   ├── bridge_client.py   # 桥 HTTP 客户端
+│   ├── idapython_docs.py  # 官方 IDAPython 文档索引（BM25）
+│   ├── api_*.py           # 工具目录（反汇编/反编译/修改/调试…）
+│   └── sync.py / rpc.py   # 主线程调度与工具注册
+├── install.py          # 插件安装器
+├── scripts/            # HCLI 打包与安装辅助
+├── test/               # pytest 套件（单元 + 无头真机）
+└── API.md / project.md / roadmap.md
 ```
-
-### 5. Reset first-launch values
-
-To generate a new token and retry IDAPython detection:
-
-```bash
-hcli plugin config IDA-MCP del gateway_token
-hcli plugin config IDA-MCP set ida_python auto
-```
-
-Restart IDA afterward. IDA-MCP displays the new token, effective gateway URL,
-detected IDAPython executable, and a copy/paste-ready MCP configuration.
-
-GitHub's automatically generated `archive/refs/heads/main.zip` source archive is
-not an HCLI single-plugin archive. Use the Release asset above or build the
-correct archive locally:
-
-```bash
-python scripts/package_hcli.py --output dist/main.zip
-hcli plugin lint dist/main.zip
-python scripts/hcli_install.py dist/main.zip
-```
-
-### Install with the interactive installer
-
-Run the interactive installer from the repository root:
-
-```bash
-python install.py
-```
-
-The installer performs the full setup flow:
-
-1. Locate the IDA installation directory.
-2. Locate the IDAPython interpreter used by that IDA installation.
-3. Optionally install `requirements.txt` into IDA's Python environment.
-4. Copy `ida_mcp.py`, `ida-plugin.json`, and the `ida_mcp/` package into IDA's `plugins/` directory.
-5. Review and write `ida_mcp/config.conf`, including an auto-generated gateway token.
-
-For manual installation, copy `ida_mcp.py`, `ida-plugin.json`, and the
-`ida_mcp/` directory into IDA's plugin directory, then install dependencies into
-IDA's Python environment:
-
-```bash
-<ida_python> -m pip install -r requirements.txt
-```
-
-Open a database in IDA and wait for initial analysis. If `auto_start` is
-`false`, run the IDA-MCP plugin once from IDA; otherwise its per-instance MCP
-server starts automatically.
-
-## HCLI Packaging
-
-`.github/workflows/package-hcli.yml` builds `dist/main.zip` on every push to
-`main`, on published Releases, and on manual dispatch. Every run uploads the ZIP
-as an Actions artifact. Release-triggered runs also attach `main.zip` to that
-Release.
-
-To attach the package to a Release such as `v0.6.3`, push the workflow first and
-run the command below. If that Release does not exist, the workflow creates it at
-the dispatched commit before uploading `main.zip`:
-
-```bash
-gh workflow run package-hcli.yml -f release_tag=v0.6.3
-```
-
-The archive deliberately places `ida-plugin.json` at the ZIP root, which is the
-layout required for HCLI URL installation.
-
-## Gateway Control Through HCLI
-
-Gateway lifecycle actions use HCLI's existing cross-platform plugin config
-command, so no `.cmd`, shell script, PATH modification, or HCLI extension is
-required:
-
-```bash
-hcli plugin config IDA-MCP set gateway start
-hcli plugin config IDA-MCP set gateway stop
-hcli plugin config IDA-MCP set gateway restart
-```
-
-The `gateway` setting defaults to `idle`, so a fresh installation does not
-start the standalone gateway automatically. IDA-MCP resets explicit start, stop,
-or restart requests to `idle` before executing them. The command is consumed by
-a lightweight watcher in the IDA plugin. If
-IDA is not currently running, the action remains stored and is executed the next
-time IDA-MCP loads. Start and restart use the configured `request_timeout`.
-
-The standalone `command.py` remains available for complete lifecycle, instance,
-tool, and resource operations:
-
-```bash
-python ida_mcp/command.py gateway status
-python ida_mcp/command.py ida list
-python ida_mcp/command.py tool call get_metadata --port 10000
-```
-
-Default endpoints:
-
-- Gateway MCP proxy: `http://127.0.0.1:11338/mcp`
-- Gateway internal API: `http://127.0.0.1:11338/internal/*`
-- Direct IDA instance MCP: `http://127.0.0.1:<instance_port>/mcp/`
-
-## Tests
-
-Tests require a running gateway and at least one registered IDA instance.
-
-```bash
-python test/test.py
-python test/test.py --core --analysis
-
-pytest -m "core or analysis"
-pytest -m "not debug"
-```
-
-The `debug` marker is excluded by default because it requires an active
-debugger. API call logs are written to `.artifacts/api_logs/`.
-
-## Documentation
-
-- `API.md` documents the MCP tools, resources, proxy behavior, and internal HTTP routes.
-- `project.md` explains repository responsibilities and module boundaries.
-- `roadmap.md` tracks current stabilization work.

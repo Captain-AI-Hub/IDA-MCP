@@ -1,8 +1,9 @@
 """IDA lifecycle API - runtime control inside an IDA process.
 
 Provides tools:
-    - close_ida   close the IDA instance
-    - save_idb    save the current database
+    - close_ida         close the IDA instance
+    - save_idb          save the current database
+    - wait_for_analysis block until IDA auto-analysis finishes
 """
 from __future__ import annotations
 
@@ -10,7 +11,7 @@ import threading
 from typing import Annotated
 
 from .rpc import tool
-from .sync import idawrite
+from .sync import idaread, idawrite, wait_for_auto_analysis
 
 try:
     import ida_kernwin  # type: ignore
@@ -86,3 +87,14 @@ def save_idb(
     except Exception as e:
         return {"error": f"save failed: {e}", "path": target}
     return {"saved": True, "path": target}
+
+
+@tool
+@idaread
+def wait_for_analysis() -> dict:
+    """Block until IDA auto-analysis (functions, xrefs, strings) completes."""
+    try:
+        wait_for_auto_analysis()
+        return {"analyzed": True}
+    except Exception as e:
+        return {"error": str(e)}

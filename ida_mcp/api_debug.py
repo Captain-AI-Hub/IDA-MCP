@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from typing import Annotated, Optional, List, Dict, Any, Union
 
-from .rpc import tool, unsafe
+from .rpc import tool
 from .sync import idaread, idawrite
 from .utils import parse_address, normalize_list_input, hex_addr
 from . import ida_shims
@@ -99,7 +99,6 @@ def _wait_for_debugger_event(timeout_ms: int = 1000) -> bool:
 # Registers
 # ============================================================================
 
-@unsafe
 @tool
 @idaread
 def dbg_regs() -> dict:
@@ -157,7 +156,6 @@ def dbg_regs() -> dict:
 # Call stack
 # ============================================================================
 
-@unsafe
 @tool
 @idaread
 def dbg_callstack() -> dict:
@@ -235,7 +233,6 @@ def dbg_callstack() -> dict:
 # Breakpoints
 # ============================================================================
 
-@unsafe
 @tool
 @idaread
 def dbg_list_bps() -> dict:
@@ -305,7 +302,6 @@ def dbg_list_bps() -> dict:
 # Debug control
 # ============================================================================
 
-@unsafe
 @tool
 @idawrite
 def dbg_start() -> dict:
@@ -354,7 +350,6 @@ def dbg_start() -> dict:
     return {"started": ok, "pid": pid, "suspended": suspended}
 
 
-@unsafe
 @tool
 @idawrite
 def dbg_exit() -> dict:
@@ -373,7 +368,6 @@ def dbg_exit() -> dict:
     return {"exited": True}
 
 
-@unsafe
 @tool
 @idawrite
 def dbg_continue() -> dict:
@@ -411,7 +405,6 @@ def dbg_continue() -> dict:
     return {"continued": bool(cont_ok)}
 
 
-@unsafe
 @tool
 @idawrite
 def dbg_run_to(
@@ -512,7 +505,6 @@ def dbg_run_to(
 # Breakpoint operations
 # ============================================================================
 
-@unsafe
 @tool
 @idawrite
 def dbg_add_bp(
@@ -585,7 +577,6 @@ def _set_breakpoint_single(query: str) -> dict:
     return result
 
 
-@unsafe
 @tool
 @idawrite
 def dbg_delete_bp(
@@ -644,7 +635,6 @@ def _delete_breakpoint_single(query: str) -> dict:
     return result
 
 
-@unsafe
 @tool
 @idawrite
 def dbg_enable_bp(
@@ -744,7 +734,6 @@ def _enable_breakpoint_single(address: int, enable: bool) -> dict:
 # Single stepping
 # ============================================================================
 
-@unsafe
 @tool
 @idawrite
 def dbg_step_into() -> dict:
@@ -782,7 +771,6 @@ def dbg_step_into() -> dict:
     return {"stepped": bool(step_ok)}
 
 
-@unsafe
 @tool
 @idawrite
 def dbg_step_over() -> dict:
@@ -824,7 +812,6 @@ def dbg_step_over() -> dict:
 # Debug memory operations
 # ============================================================================
 
-@unsafe
 @tool
 @idaread
 def dbg_read_mem(
@@ -896,7 +883,6 @@ def dbg_read_mem(
     return results
 
 
-@unsafe
 @tool
 @idawrite
 def dbg_write_mem(
@@ -965,7 +951,6 @@ def dbg_write_mem(
 # ============================================================================
 
 
-@unsafe
 @tool
 @idaread
 def dbg_status() -> dict:
@@ -1020,7 +1005,6 @@ def dbg_status() -> dict:
     return result
 
 
-@unsafe
 @tool
 @idawrite
 def dbg_thread_regs(

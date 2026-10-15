@@ -20,7 +20,7 @@ import re
 import shutil
 from typing import Annotated, Optional, List, Dict, Any, Union
 
-from .rpc import tool, unsafe
+from .rpc import tool
 from .strings_cache import invalidate_strings_cache
 from .sync import idaread, idawrite, wait_for_auto_analysis
 from .utils import parse_address, is_valid_c_identifier, normalize_list_input, hex_addr
@@ -359,7 +359,6 @@ def rename_global_variable(
 # Byte patching
 # ============================================================================
 
-@unsafe
 @tool
 @idawrite
 def patch_bytes(
@@ -535,7 +534,6 @@ def _collect_patched_file_bytes(input_size: int) -> tuple[list[dict], list[dict]
     return applied, skipped
 
 
-@unsafe
 @tool
 @idawrite
 def apply_patch(
@@ -708,7 +706,6 @@ def add_bookmark(
         return {"error": f"bookmark failed: {e}", "address": hex_addr(ea)}
 
 
-@unsafe
 @tool
 @idawrite
 def patch_asm(
@@ -913,7 +910,6 @@ _DIFF_BLOCKED_ACTIONS = {
 }
 
 
-@unsafe
 @tool
 @idawrite
 def diff_before_after(

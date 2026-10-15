@@ -1,198 +1,95 @@
-"""Unit tests for HCLI-backed configuration."""
+"""Config layer tests: precedence, user config, env overrides, accessors."""
 
 from __future__ import annotations
 
 import sys
-from types import SimpleNamespace
+from pathlib import Path
 from unittest.mock import patch
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from ida_mcp import config
 
 
-def _reset_config_cache() -> None:
+@pytest.fixture(autouse=True)
+def _reload_config():
+    config._cached_config = None
+    yield
     config._cached_config = None
 
 
-def test_hcli_settings_override_config_file_and_environment():
-    values = {
-        "gateway_token": "hcli-token-with-sufficient-length",
-        "auto_start": True,
-        "enable_unsafe": False,
-        "http_port": "12345",
-    }
-    fake_ida_settings = SimpleNamespace(
-        get_current_plugin_setting=lambda key: values.get(key, "")
-    )
-
-    with patch.dict(sys.modules, {"ida_settings": fake_ida_settings}):
-        with patch.object(
-            config,
-            "parse_config_file",
-            return_value={"gateway_token": "file-token", "auto_start": False},
-        ):
-            with patch.dict(
-                config.os.environ,
-                {"IDA_MCP_CONFIG_GATEWAY_TOKEN": "environment-token"},
-                clear=False,
-            ):
-                loaded = config.load_config(reload=True)
-
-    assert loaded["gateway_token"] == "hcli-token-with-sufficient-length"
-    assert loaded["auto_start"] is True
-    assert loaded["enable_unsafe"] is False
-    assert loaded["http_port"] == "12345"
-    _reset_config_cache()
+def test_defaults_apply_without_overrides():
+    with patch.object(config, "_hcli_setting_overrides", return_value={}):
+        loaded = config.load_config(reload=True)
+    assert loaded["request_timeout"] == 30
 
 
-def test_empty_optional_hcli_setting_preserves_config_file_value():
-    fake_ida_settings = SimpleNamespace(
-        get_current_plugin_setting=lambda _key: ""
-    )
+def test_env_overrides_beat_file_config(monkeypatch):
+    monkeypatch.setenv("IDA_MCP_CONFIG_REQUEST_TIMEOUT", "77")
+    with patch.object(config, "_hcli_setting_overrides", return_value={}):
+        loaded = config.load_config(reload=True)
+    assert loaded["request_timeout"] == 77
 
-    with patch.dict(sys.modules, {"ida_settings": fake_ida_settings}):
-        with patch.object(
-            config,
-            "parse_config_file",
-            return_value={"ida_path": r"C:\Program Files\IDA Professional 9.4\ida.exe"},
-        ):
+
+def test_hcli_settings_beat_env(monkeypatch):
+    monkeypatch.setenv("IDA_MCP_CONFIG_REQUEST_TIMEOUT", "11")
+    with patch.object(
+        config,
+        "_hcli_setting_overrides",
+        return_value={"request_timeout": 22},
+    ):
+        loaded = config.load_config(reload=True)
+    assert loaded["request_timeout"] == 22
+
+
+def test_accessors(tmp_path):
+    with patch.object(config, "_user_config_file", return_value=str(tmp_path / "none.conf")):
+        with patch.object(config, "_hcli_setting_overrides", return_value={}):
+            assert config.get_ida_path() is None
+        assert config.get_idalib_python() is None
+        assert config.get_request_timeout() == 30
+        assert config.is_debug_enabled() is False
+    # Removed layers stay removed: http transport, gateway token, unsafe
+    # gating, WSL bridge, and the bridge host/port/token/auto_start knobs.
+    for name in (
+        "get_transport",
+        "get_http_url",
+        "get_gateway_token",
+        "is_unsafe_enabled",
+        "is_wsl_path_bridge_enabled",
+        "get_instance_host",
+        "get_instance_port",
+        "get_instance_token",
+        "is_auto_start_enabled",
+        "is_open_in_ida_autonomous_enabled",
+        "get_server_name",
+        "get_launch_bundle_dir",
+    ):
+        assert not hasattr(config, name), name
+
+
+def test_persist_user_setting_roundtrip(tmp_path):
+    user_conf = tmp_path / "config.conf"
+    with patch.object(config, "_user_config_file", return_value=str(user_conf)):
+        assert config.persist_user_setting("idalib_python", "/opt/idapy/bin/python3.12")
+        content = user_conf.read_text(encoding="utf-8")
+        assert 'idalib_python = "/opt/idapy/bin/python3.12"' in content
+        with patch.object(config, "_hcli_setting_overrides", return_value={}):
             loaded = config.load_config(reload=True)
-
-    assert loaded["ida_path"] == r"C:\Program Files\IDA Professional 9.4\ida.exe"
-    _reset_config_cache()
+    assert loaded["idalib_python"] == "/opt/idapy/bin/python3.12"
 
 
-def test_build_subprocess_environment_forwards_effective_settings():
-    with patch.object(
-        config,
-        "load_config",
-        return_value={
-            "gateway_token": "gateway-token",
-            "auto_start": True,
-            "enable_unsafe": False,
-            "ida_path": "",
-        },
-    ):
-        environment = config.build_subprocess_environment({"PATH": "test-path"})
-
-    assert environment["PATH"] == "test-path"
-    assert environment["IDA_MCP_CONFIG_GATEWAY_TOKEN"] == "gateway-token"
-    assert environment["IDA_MCP_CONFIG_AUTO_START"] == "true"
-    assert environment["IDA_MCP_CONFIG_ENABLE_UNSAFE"] == "false"
-    assert "IDA_MCP_CONFIG_IDA_PATH" not in environment
-
-
-def test_initialize_runtime_settings_generates_token_and_detects_python():
-    with patch.object(
-        config,
-        "load_config",
-        return_value={
-            "gateway_token": config._AUTO_TOKEN_SENTINEL,
-            "ida_python": "auto",
-        },
-    ):
-        with patch.object(config.secrets, "token_urlsafe", return_value="generated-token-with-enough-entropy"):
+def test_initialize_runtime_settings_detects_python(tmp_path):
+    with patch.object(config, "_CONFIG_FILE", str(tmp_path / "none.conf")):
+        with patch.object(
+            config, "_detect_running_ida_python", return_value="/opt/idapy/bin/python3.12"
+        ):
             with patch.object(
-                config,
-                "_detect_running_ida_python",
-                return_value=r"C:\Python312\python.exe",
-            ):
-                with patch.object(config, "_persist_string_setting", return_value="hcli") as persist:
-                    result = config.initialize_runtime_settings()
-
-    assert result == {
-        "gateway_token": "generated-token-with-enough-entropy",
-        "gateway_token_generated": True,
-        "gateway_token_storage": "hcli",
-        "ida_python": r"C:\Python312\python.exe",
-        "ida_python_detected": True,
-    }
-    assert persist.call_args_list[0].args == (
-        "gateway_token",
-        "generated-token-with-enough-entropy",
-    )
-    assert persist.call_args_list[1].args == (
-        "ida_python",
-        r"C:\Python312\python.exe",
-    )
-    _reset_config_cache()
-
-
-def test_get_ida_python_treats_auto_as_unconfigured():
-    with patch.object(config, "load_config", return_value={"ida_python": "auto"}):
-        assert config.get_ida_python() is None
-
-
-def test_get_mcp_client_config_includes_url_and_token_headers():
-    with patch.object(config, "get_http_url", return_value="http://127.0.0.1:11338/mcp"):
-        with patch.object(config, "get_gateway_token", return_value="secret-token"):
-            value = config.get_mcp_client_config()
-
-    assert value == {
-        "mcpServers": {
-            "ida-mcp": {
-                "url": "http://127.0.0.1:11338/mcp",
-                "headers": {
-                    "Authorization": "Bearer secret-token",
-                    "X-IDA-MCP-Token": "secret-token",
-                },
-            }
-        }
-    }
-
-
-def test_get_mcp_client_config_omits_empty_auth_headers():
-    with patch.object(config, "get_http_url", return_value="http://127.0.0.1:11338/mcp"):
-        with patch.object(config, "get_gateway_token", return_value=None):
-            value = config.get_mcp_client_config()
-
-    assert value == {"mcpServers": {"ida-mcp": {"url": "http://127.0.0.1:11338/mcp"}}}
-
-
-def test_initialize_runtime_settings_reports_generated_token_when_persistence_fails():
-    with patch.object(
-        config,
-        "load_config",
-        return_value={"gateway_token": config._AUTO_TOKEN_SENTINEL, "ida_python": "auto"},
-    ):
-        with patch.object(config.secrets, "token_urlsafe", return_value="generated-token-with-enough-entropy"):
-            with patch.object(config, "_detect_running_ida_python", return_value=None):
-                with patch.object(config, "_persist_string_setting", return_value=None):
-                    result = config.initialize_runtime_settings()
-
-    assert result["gateway_token"] == "generated-token-with-enough-entropy"
-    assert result["gateway_token_generated"] is True
-    assert config._cached_config["gateway_token"] == "generated-token-with-enough-entropy"
-    _reset_config_cache()
-
-
-def test_hcli_token_sentinel_does_not_override_config_file_token():
-    fake_ida_settings = SimpleNamespace(
-        get_current_plugin_setting=lambda key: (
-            config._AUTO_TOKEN_SENTINEL if key == "gateway_token" else ""
-        )
-    )
-
-    with patch.dict(sys.modules, {"ida_settings": fake_ida_settings}):
-        with patch.object(
-            config,
-            "parse_config_file",
-            return_value={"gateway_token": "persisted-config-token"},
-        ):
-            loaded = config.load_config(reload=True)
-
-    assert loaded["gateway_token"] == "persisted-config-token"
-    _reset_config_cache()
-
-
-def test_detect_running_ida_python_supports_prefix_root_python(monkeypatch, tmp_path):
-    prefix = tmp_path / "ida-python"
-    python = prefix / "python"
-    prefix.mkdir()
-    python.write_bytes(b"")
-    monkeypatch.setattr(config.os, "name", "posix")
-    monkeypatch.setattr(config.sys, "exec_prefix", str(prefix))
-    monkeypatch.setattr(config.sys, "base_prefix", str(prefix))
-    monkeypatch.setattr(config.sys, "prefix", str(prefix))
-    monkeypatch.setattr(config.sys, "executable", "/opt/ida/idat")
-
-    assert config._detect_running_ida_python() == str(python.resolve())
+                config, "_write_config_string", return_value=True
+            ) as write:
+                result = config.initialize_runtime_settings()
+    assert result["ida_python"] == "/opt/idapy/bin/python3.12"
+    assert result["ida_python_detected"] is True
+    write.assert_called_once()

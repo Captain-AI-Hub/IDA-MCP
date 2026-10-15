@@ -1,8 +1,5 @@
-# MCP 2026-07-28 / Python SDK v2 compatible stack
+# Standalone MCP server (stdio) + dev/test runtime dependencies.
+# The in-IDA bridge plugin is stdlib-only and needs no third-party packages.
 fastmcp>=4.0.0b1,<5
-mcp>=2.0.0,<3
-starlette>=1.0.1,<2
-uvicorn>=0.35,<1
 pydantic>=2.12,<3
 pytest>=9,<10
-colorama>=0.4,<1

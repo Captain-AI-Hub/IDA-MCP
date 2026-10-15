@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import secrets
 import shutil
 import subprocess
 import sys
@@ -146,6 +145,66 @@ def detect_ida_python(ida_executable: Path) -> Path | None:
     return _detect_ida_python(ida_executable)
 
 
+def _python_can_idalib(python_path: Path) -> bool:
+    import subprocess as _sp
+
+    try:
+        return (
+            _sp.run(
+                [str(python_path), "-c", "import idapro"],
+                capture_output=True,
+                timeout=30,
+            ).returncode
+            == 0
+        )
+    except (OSError, _sp.TimeoutExpired):
+        return False
+
+
+def detect_idalib_python(ida_python: Path | None, ida_executable: Path) -> Path | None:
+    """Find a Python with the official idalib bindings (idapro importable)."""
+    candidates: list[Path] = []
+    if ida_python is not None:
+        candidates.append(ida_python)
+    install_dir = ida_executable.parent
+    ida_python_dir = install_dir / "ida-python"
+    if ida_python_dir.is_dir():
+        bin_dir = ida_python_dir / "bin"
+        if bin_dir.is_dir():
+            candidates.extend(
+                sorted(
+                    bin_dir.glob("python3.*"),
+                    reverse=True,
+                )
+            )
+            candidates.append(bin_dir / "python3")
+        candidates.append(ida_python_dir / "python.exe")
+    for candidate in candidates:
+        if candidate.is_file() and _python_can_idalib(candidate):
+            return candidate
+    return None
+
+
+def persist_detected_settings(
+    ida_executable: Path, ida_python: Path | None, idalib_python: Path | None
+) -> None:
+    """Cache machine-specific detections into the user-scope config."""
+    import sys
+
+    root = Path(__file__).resolve().parents[1]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    try:
+        from ida_mcp.config import persist_user_setting
+    except Exception:  # noqa: BLE001 - caching is best effort
+        return
+    persist_user_setting("ida_path", str(ida_executable))
+    if ida_python is not None:
+        persist_user_setting("ida_python", str(ida_python))
+    if idalib_python is not None:
+        persist_user_setting("idalib_python", str(idalib_python))
+
+
 def build_hcli_environment(ida_python: Path, base: dict[str, str] | None = None) -> dict[str, str]:
     """Build an HCLI environment that cannot fall back to its own Python."""
     env = dict(os.environ if base is None else base)
@@ -159,7 +218,6 @@ def personalize_archive(
     *,
     ida_executable: Path,
     ida_python: Path | None,
-    gateway_token: str | None = None,
 ) -> None:
     """Inject machine-specific defaults into a temporary HCLI install archive."""
     with zipfile.ZipFile(source, "r") as input_zip:
@@ -177,9 +235,6 @@ def personalize_archive(
     ida_path_setting["default"] = str(ida_executable)
     ida_path_setting["name"] = f"IDA executable path ({ida_executable})"
 
-    if gateway_token is not None:
-        settings["gateway_token"]["default"] = gateway_token
-
     python_setting = settings["ida_python"]
     if ida_python is not None:
         python_setting["default"] = str(ida_python)
@@ -187,6 +242,16 @@ def personalize_archive(
     else:
         python_setting["default"] = "auto"
         python_setting["name"] = "IDAPython interpreter path (not detected; resolve on first IDA launch)"
+
+    idalib_setting = settings.get("idalib_python")
+    if idalib_setting is not None:
+        idalib = detect_idalib_python(ida_python, ida_executable)
+        if idalib is not None:
+            idalib_setting["default"] = str(idalib)
+            idalib_setting["name"] = f"idalib Python ({idalib})"
+        else:
+            idalib_setting["default"] = ""
+            idalib_setting["name"] = "idalib Python (not detected; auto-detected on first open_database)"
 
     updated_manifest = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -197,23 +262,25 @@ def personalize_archive(
             output_zip.writestr(info, data)
 
 
-def mcp_client_config(gateway_token: str) -> dict[str, object]:
+def mcp_client_config() -> dict[str, object]:
     return {
         "mcpServers": {
             "ida-mcp": {
-                "url": "http://127.0.0.1:11338/mcp",
-                "headers": {
-                    "Authorization": f"Bearer {gateway_token}",
-                    "X-IDA-MCP-Token": gateway_token,
-                },
+                "command": "uvx",
+                "args": [
+                    "--from",
+                    "git+https://github.com/Captain-AI-Hub/IDA-MCP",
+                    "idamcp",
+                    "stdio",
+                ],
             }
         }
     }
 
 
-def print_mcp_client_config(gateway_token: str) -> None:
+def print_mcp_client_config() -> None:
     print("Copy this configuration into your MCP client's mcp.json:")
-    print(json.dumps(mcp_client_config(gateway_token), ensure_ascii=False, indent=2))
+    print(json.dumps(mcp_client_config(), ensure_ascii=False, indent=2))
 
 
 def main() -> int:
@@ -248,8 +315,6 @@ def main() -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    gateway_token = secrets.token_urlsafe(32)
-
     print(f"Detected IDA executable: {ida_executable}")
     if ida_python is None:
         print("error: IDAPython was not detected; refusing to use the system Python", file=sys.stderr)
@@ -263,10 +328,11 @@ def main() -> int:
             destination,
             ida_executable=ida_executable,
             ida_python=ida_python,
-            gateway_token=gateway_token,
         )
         print(f"Prepared personalized HCLI archive: {destination}")
-        print_mcp_client_config(gateway_token)
+        idalib = detect_idalib_python(ida_python, ida_executable)
+        persist_detected_settings(ida_executable, ida_python, idalib)
+        print_mcp_client_config()
         return 0
 
     hcli = shutil.which("hcli")
@@ -281,7 +347,6 @@ def main() -> int:
             personalized,
             ida_executable=ida_executable,
             ida_python=ida_python,
-            gateway_token=gateway_token,
         )
         print("Starting HCLI with the detected IDAPython interpreter for dependency installation...")
         # HCLI 0.19 honors this override before probing or falling back.
@@ -292,7 +357,9 @@ def main() -> int:
             check=False,
         ).returncode
         if return_code == 0:
-            print_mcp_client_config(gateway_token)
+            idalib = detect_idalib_python(ida_python, ida_executable)
+            persist_detected_settings(ida_executable, ida_python, idalib)
+            print_mcp_client_config()
         return return_code
 
 

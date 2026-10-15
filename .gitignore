@@ -13,3 +13,7 @@ dist/
 *.id2
 *.nam
 *.til
+.venv/
+dist/
+*.i64
+*.idb
