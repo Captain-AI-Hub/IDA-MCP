@@ -881,24 +881,30 @@ def find_bytes(
     
     ida_pattern = ' '.join(ida_pattern_parts)
     
-    # search
+    # search via ida_bytes.find_bytes (ida_search.find_binary was removed
+    # in IDA 9.4)
+    if ida_bytes is None or not hasattr(ida_bytes, "find_bytes"):
+        return {"error": "ida_bytes.find_bytes unavailable in this IDA build"}
+
+    try:
+        forward = getattr(ida_bytes, "BIN_SEARCH_FORWARD", 0)
+    except Exception:
+        forward = 0
+
     matches: List[dict] = []
     truncated = False
-    
+
     try:
         ea = start_ea
         while ea < end_ea and len(matches) < limit:
-            # use ida_search.find_binary
             try:
-                found = ida_search.find_binary(  # type: ignore
-                    ea, end_ea, ida_pattern,
-                    16,  # radix
-                    ida_search.SEARCH_DOWN | ida_search.SEARCH_NEXT
+                found = ida_bytes.find_bytes(  # type: ignore
+                    ida_pattern, ea, end_ea, forward
                 )
-            except Exception:
-                break
-            
-            if found == idaapi.BADADDR:
+            except Exception as e:
+                return {"error": f"find_bytes failed: {e}"}
+
+            if found is None or found == idaapi.BADADDR or found < ea:
                 break
             
             # read matched bytes

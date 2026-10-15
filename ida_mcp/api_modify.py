@@ -719,11 +719,20 @@ def patch_asm(
     if ida_idp is None or not hasattr(ida_idp, "assemble"):
         return [{"error": "assembler unavailable in this IDA build"}]
 
-    use32 = True
-    try:
-        use32 = not ida_ida.inf_is_64bit()
-    except Exception:
-        pass
+    def _segment_use32(ea: int) -> bool:
+        # Operand size comes from the segment: only 16-bit segments need
+        # use32=False; 32- and 64-bit segments both assemble with use32=True
+        # (inf_is_64bit() wrongly forced 16-bit encodings on x64).
+        try:
+            import ida_segment
+
+            seg = ida_segment.getseg(ea)
+            if seg is not None:
+                return seg.bitness != 0  # 0 = 16-bit
+        except Exception:
+            pass
+        return True
+
 
     results = []
     for item in items:
@@ -743,16 +752,39 @@ def patch_asm(
         ea = parsed["value"]
 
         try:
-            data = ida_idp.assemble(ea, 0, ea, use32, asm_text)
+            ret = ida_idp.assemble(ea, 0, ea, _segment_use32(ea), asm_text)
         except Exception as e:
             results.append({"error": f"assemble failed: {e}", "address": hex_addr(ea), "asm": asm_text})
             continue
-        if not data:
+
+        if isinstance(ret, bool):
+            # IDA 9.4+: assemble() writes the encoding straight into the
+            # database and returns a success flag.
+            if not ret:
+                results.append({"error": "assemble failed", "address": hex_addr(ea), "asm": asm_text})
+                continue
+            try:
+                import ida_ua
+
+                insn = ida_ua.insn_t()
+                decoded = ida_ua.decode_insn(insn, ea)
+                size = insn.size if decoded > 0 else 0
+            except Exception:
+                size = 0
+            raw = ida_bytes.get_bytes(ea, size) if size > 0 else None
+            results.append({
+                "address": hex_addr(ea),
+                "bytes": raw.hex(" ") if raw else None,
+                "size": size,
+                "written": True,
+            })
+            continue
+
+        # Legacy contract: assemble() returns the encoded bytes.
+        if not ret:
             results.append({"error": "assemble failed", "address": hex_addr(ea), "asm": asm_text})
             continue
-        if isinstance(data, str):
-            data = data.encode("latin-1")
-        data = bytes(data)
+        data = ret.encode("latin-1") if isinstance(ret, str) else bytes(ret)
 
         try:
             ida_bytes.patch_bytes(ea, data)

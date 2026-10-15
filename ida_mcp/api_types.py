@@ -111,6 +111,12 @@ def _parse_decl_tinfo(decl_text: str) -> tuple[Any, Optional[str], list[str]]:
     name = None
     parse_errors: List[str] = []
 
+    # ida_typeinf.parse_decl requires a trailing semicolon in IDA 9.4
+    # (idc.parse_decl appends one itself).
+    decl_text = decl_text.strip()
+    if decl_text and not decl_text.endswith(";"):
+        decl_text += ";"
+
     variants = [
         ("idaapi.parse_decl", lambda: idaapi.parse_decl(tinfo, idaapi.cvar.idati, decl_text, PT_SIL)),  # type: ignore
         ("ida_typeinf.parse_decl", lambda: ida_typeinf.parse_decl(tinfo, idaapi.cvar.idati, decl_text, PT_SIL)),  # type: ignore
@@ -332,7 +338,10 @@ def set_function_prototype(
         return {"error": "invalid function_address"}
     
     proto_text = prototype.strip()
-    
+    # ida_typeinf.parse_decl requires a trailing semicolon in IDA 9.4
+    if proto_text and not proto_text.endswith(";"):
+        proto_text += ";"
+
     try:
         fstart = ida_shims.func_start(parsed["value"])
     except Exception:

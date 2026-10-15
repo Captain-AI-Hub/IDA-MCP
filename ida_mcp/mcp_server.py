@@ -68,7 +68,13 @@ def _select_entry(entry: Optional[Dict[str, Any]]) -> None:
 
 
 def set_selected(instance_id: Optional[str]) -> Optional[Dict[str, Any]]:
-    entry = instances.find_by_id(str(instance_id)) if instance_id else None
+    entry = None
+    if instance_id:
+        entry = instances.find_by_id(str(instance_id))
+    else:
+        # Auto-select the most recently started live instance.
+        live = [e for e in instances.list_live_instances() if bridge_client.is_alive(e)]
+        entry = live[-1] if live else None
     if entry is None or not bridge_client.is_alive(entry):
         return None
     _select_entry(entry)
@@ -239,7 +245,6 @@ def _register_management_tools(server: "Any") -> None:
             "ok": True,
             "instance_id": entry.get("instance_id"),
             "pid": entry.get("pid"),
-            "port": entry.get("port"),
             "headless": bool(entry.get("headless")),
             "input_file": meta.get("input_file"),
             "database_path": meta.get("database_path"),
@@ -260,7 +265,6 @@ def _register_management_tools(server: "Any") -> None:
                 {
                     "instance_id": entry.get("instance_id"),
                     "pid": entry.get("pid"),
-                    "port": entry.get("port"),
                     "headless": bool(entry.get("headless")),
                     "input_file": entry.get("input_file"),
                     "database_path": entry.get("database_path"),
@@ -287,7 +291,7 @@ def _register_management_tools(server: "Any") -> None:
                 "Instance not found or unreachable. Use list_databases() to see live instances.",
                 instance_id=instance_id,
             )
-        return {"selected_instance_id": entry.get("instance_id"), "port": entry.get("port")}
+        return {"selected_instance_id": entry.get("instance_id")}
 
     server.tool(
         description="Choose the default IDA instance for subsequent calls. Returns {selected_instance_id} or {error}."

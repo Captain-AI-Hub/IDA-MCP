@@ -45,11 +45,18 @@ def get_bytes(
     
     for query in queries:
         parsed = parse_address(query)
-        if not parsed["ok"] or parsed["value"] is None:
-            results.append({"error": "invalid address", "query": query})
+        address = parsed["value"] if parsed["ok"] else None
+        if address is None:
+            # Fall back to symbol-name resolution, matching the other tools
+            try:
+                import idaapi  # type: ignore
+
+                address = idaapi.get_name_ea(idaapi.BADADDR, str(query))
+            except Exception:
+                address = None
+        if address is None or address == -1:
+            results.append({"error": "invalid address or name", "query": query})
             continue
-        
-        address = parsed["value"]
         try:
             data = ida_bytes.get_bytes(address, size)
             if data is None:
@@ -97,11 +104,18 @@ def _read_scalar(addr: Union[int, str], width: int, signed: bool = False) -> Lis
     
     for query in queries:
         parsed = parse_address(query)
-        if not parsed["ok"] or parsed["value"] is None:
-            results.append({"error": "invalid address", "query": query})
+        address = parsed["value"] if parsed["ok"] else None
+        if address is None:
+            # Fall back to symbol-name resolution, matching the other tools
+            try:
+                import idaapi  # type: ignore
+
+                address = idaapi.get_name_ea(idaapi.BADADDR, str(query))
+            except Exception:
+                address = None
+        if address is None or address == -1:
+            results.append({"error": "invalid address or name", "query": query})
             continue
-        
-        address = parsed["value"]
         try:
             data = ida_bytes.get_bytes(address, width)
             if data is None:
@@ -151,11 +165,18 @@ def get_string(
     
     for query in queries:
         parsed = parse_address(query)
-        if not parsed["ok"] or parsed["value"] is None:
-            results.append({"error": "invalid address", "query": query})
+        address = parsed["value"] if parsed["ok"] else None
+        if address is None:
+            # Fall back to symbol-name resolution, matching the other tools
+            try:
+                import idaapi  # type: ignore
+
+                address = idaapi.get_name_ea(idaapi.BADADDR, str(query))
+            except Exception:
+                address = None
+        if address is None or address == -1:
+            results.append({"error": "invalid address or name", "query": query})
             continue
-        
-        address = parsed["value"]
         try:
             # read bytes until null terminator
             data = ida_bytes.get_bytes(address, max_len)
