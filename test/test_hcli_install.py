@@ -194,4 +194,5 @@ def test_manifest_prompts_for_idapython_and_auto_start_defaults_on():
     for removed in ("auto_start", "open_in_ida_autonomous", "instance_host",
                     "instance_port", "launch_bundle_dir"):
         assert removed not in settings, removed
-    assert manifest["plugin"]["pythonDependencies"] == ["ida-settings>=3,<4"]
+    # Zero in-IDA dependencies: the bridge is stdlib-only.
+    assert manifest["plugin"]["pythonDependencies"] == []

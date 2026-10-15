@@ -1,9 +1,8 @@
-# IDA-MCP
+# IDA-MCP-Hub
 
 IDA Pro 的 MCP（Model Context Protocol）服务器：**stdio 传输**、无头 idalib worker、
-多实例生命周期管理与官方 IDAPython 文档查询。架构参考
-[HexRaysSA/ida-mcp](https://github.com/HexRaysSA/ida-mcp)，工具目录为本项目自有
-的反汇编/反编译/修改/调试全量 API（93 个工具）。
+多实例生命周期管理与官方 IDAPython 文档查询。工具目录为本项目自有的
+反汇编/反编译/修改/调试全量 API（93 个工具）。
 
 ```text
 MCP 客户端 ──stdio──▶ idamcp-hub 独立进程
@@ -32,7 +31,7 @@ MCP 客户端 ──stdio──▶ idamcp-hub 独立进程
 ```bash
 python install.py            # 复制 ida_mcp.py + ida_mcp/ 到 IDA plugins 目录
 # 或
-hcli plugin install https://github.com/Captain-AI-Hub/IDA-MCP/releases/latest/download/main.zip
+hcli plugin install IDA-MCP-Hub@https://github.com/Captain-AI-Hub/IDA-MCP
 ```
 
 插件加载后桥自动启动：固定监听 `127.0.0.1`（端口自 13337 向上递增），

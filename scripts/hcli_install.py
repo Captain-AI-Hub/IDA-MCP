@@ -309,8 +309,16 @@ def main() -> int:
 
     print(f"Detected IDA executable: {ida_executable}")
     if ida_python is None:
-        print("error: IDAPython was not detected; refusing to use the system Python", file=sys.stderr)
-        return 1
+        print("IDAPython was not detected automatically; you can enter it manually.")
+        answer = input("IDAPython interpreter path (empty to abort): ").strip().strip('"').strip("'")
+        if not answer:
+            print("error: IDAPython interpreter is required", file=sys.stderr)
+            return 1
+        candidate = Path(answer).expanduser()
+        if not candidate.is_file():
+            print(f"error: IDAPython interpreter not found: {candidate}", file=sys.stderr)
+            return 1
+        ida_python = candidate
     print(f"Detected IDAPython interpreter: {ida_python}")
 
     if args.prepare_only:

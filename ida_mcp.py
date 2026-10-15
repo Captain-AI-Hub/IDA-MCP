@@ -113,9 +113,9 @@ def PLUGIN_ENTRY():  # IDA looks for this symbol
 
 class IDAMCPPlugin(idaapi.plugin_t if idaapi else object):  # type: ignore
     flags = 0
-    comment = "JSON-RPC bridge for IDA-MCP"
+    comment = "JSON-RPC bridge for IDA-MCP-Hub"
     help = "Expose IDA features through the IDA-MCP bridge"
-    wanted_name = "IDA-MCP"
+    wanted_name = "IDA-MCP-Hub"
     wanted_hotkey = ""
 
     def init(self):  # type: ignore

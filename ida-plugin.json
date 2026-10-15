@@ -1,7 +1,7 @@
 {
   "IDAMetadataDescriptorVersion": 1,
   "plugin": {
-    "name": "IDA-MCP",
+    "name": "IDA-MCP-Hub",
     "version": "0.9.0",
     "entryPoint": "ida_mcp.py",
     "urls": {
@@ -28,9 +28,7 @@
       }
     ],
     "idaVersions": ">=9.0",
-    "pythonDependencies": [
-      "ida-settings>=3,<4"
-    ],
+    "pythonDependencies": [],
     "settings": [
       {
         "key": "ida_path",
