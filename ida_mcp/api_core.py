@@ -195,8 +195,12 @@ def list_functions(
     
     if pattern:
         functions = pattern_filter(functions, 'name', pattern)
-    
-    return paginate(functions, offset, count)  # type: ignore
+
+    page = paginate(functions, offset, count)  # type: ignore
+    page["items"] = "\n".join(
+        f"{f['start_ea']}-{f['end_ea']}  {f['name']}" for f in page["items"]
+    )
+    return page
 
 
 # ============================================================================
@@ -246,8 +250,13 @@ def list_globals(
     
     if pattern:
         entries = pattern_filter(entries, 'name', pattern)
-    
-    return paginate(entries, offset, count)  # type: ignore
+
+    page = paginate(entries, offset, count)  # type: ignore
+    page["items"] = "\n".join(
+        f"{g['ea']}  {g['name']}" + (f"  ({g['size']}B)" if g.get("size") else "")
+        for g in page["items"]
+    )
+    return page
 
 
 # ============================================================================
@@ -288,7 +297,18 @@ def list_strings(
             substr = pattern.lower()
             items = [item for item in items if substr in item["text"].lower()]
     
-    return paginate(items, offset, count)  # type: ignore
+    page = paginate(items, offset, count)  # type: ignore
+
+    def _escape(text: str) -> str:
+        # string contents may contain newlines; keep one item per line
+        return text.replace("\r", "").replace("\n", "\\n")
+
+    page["items"] = "\n".join(
+        f"{it['ea']}  {_escape(it['text'])}"
+        + (f"  [{it['type']}]" if it.get("type") and it["type"] != "C" else "")
+        for it in page["items"]
+    )
+    return page
 
 
 # ============================================================================
@@ -332,7 +352,7 @@ def list_local_types() -> dict:
             'decl': decl,
         })
     
-    return {"total": len(items), "items": items}
+    return {"total": len(items), "items": "\n".join(it["decl"] for it in items)}
 
 
 # ============================================================================
@@ -485,7 +505,20 @@ def list_imports(
             if substr in it.get('name', '').lower() or substr in it.get('module', '').lower()
         ]
     
-    return paginate(items, offset, count)  # type: ignore
+    page = paginate(items, offset, count)  # type: ignore
+    by_module: List[str] = []
+    current: List[str] = []
+    module = None
+    for imp in page["items"]:
+        if imp["module"] != module:
+            if module is not None:
+                by_module.append(f"{module}: " + ", ".join(current))
+            module, current = imp["module"], []
+        current.append(imp["name"])
+    if module is not None:
+        by_module.append(f"{module}: " + ", ".join(current))
+    page["items"] = "\n".join(by_module)
+    return page
 
 
 # ============================================================================
@@ -521,11 +554,13 @@ def list_exports(
         return {"error": f"list_exports failed: {e}"}
     
     items.sort(key=lambda x: int(x['ea'], 16))
-    
+
     if pattern:
         items = pattern_filter(items, 'name', pattern)
-    
-    return paginate(items, offset, count)  # type: ignore
+
+    page = paginate(items, offset, count)  # type: ignore
+    page["items"] = "\n".join(f"{e['ea']}  {e['name']}" for e in page["items"])
+    return page
 
 
 # ============================================================================
@@ -565,8 +600,13 @@ def list_segments() -> dict:
             })
     except Exception as e:
         return {"error": f"list_segments failed: {e}"}
-    
-    return {"total": len(items), "items": items}
+
+    lines = [
+        f"{s_['name']}  {s_['start_ea']}-{s_['end_ea']}  {s_['perm']}  {s_['class']}"
+        + (f"  [{s_['bitness']}bit]" if s_["bitness"] != 64 else "")
+        for s_ in items
+    ]
+    return {"total": len(items), "items": "\n".join(lines)}
 
 
 @tool
@@ -774,6 +814,7 @@ def survey_binary() -> dict:
             })
     except Exception:
         segments = []
+    # noqa keeps the dict list above internal-only; rendered below
 
     entry_points: List[dict] = []
     try:
@@ -791,6 +832,10 @@ def survey_binary() -> dict:
     return {
         "metadata": metadata,
         "counts": counts,
-        "segments": segments,
-        "entry_points": entry_points,
+        "segments": "\n".join(
+            f"{seg['name']}  {seg['start_ea']}-{seg['end_ea']}" for seg in segments
+        ),
+        "entry_points": "\n".join(
+            f"{ep['ea']}  {ep['name']}" for ep in entry_points
+        ),
     }

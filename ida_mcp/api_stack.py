@@ -186,6 +186,15 @@ def stack_frame(
     return results
 
 
+def _render_frame_var(v: dict) -> str:
+    line = f"{v.get('offset', '-')}  {v.get('name', '?')}  {v.get('type', '')}"
+    if v.get("size"):
+        line += f"  ({v['size']}B)"
+    if v.get("location") and v["location"] != "stack":
+        line += f"  [{v['location']}]"
+    return line
+
+
 def _stack_frame_single(query: str) -> dict:
     """Get stack frame info for a single function."""
     parsed = resolve_address(query)
@@ -292,12 +301,16 @@ def _stack_frame_single(query: str) -> dict:
     }
     
     if frame_variables:
-        result["variables"] = frame_variables
+        result["variables"] = "\n".join(_render_frame_var(v) for v in frame_variables)
+        result["count"] = len(frame_variables)
         result["method"] = "ida_frame"
         if local_variables:
-            result["local_variables"] = local_variables
+            result["local_variables"] = "\n".join(
+                _render_frame_var(v) for v in local_variables
+            )
     else:
-        result["variables"] = local_variables
+        result["variables"] = "\n".join(_render_frame_var(v) for v in local_variables)
+        result["count"] = len(local_variables)
         result["method"] = "hexrays"
     
     return result

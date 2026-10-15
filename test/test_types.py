@@ -365,10 +365,9 @@ class TestListStructs:
         result = api_types.list_structs.__wrapped__()
 
         assert result["total"] == 2
-        assert result["items"] == [
-            {"ordinal": 2, "name": "TestStruct", "kind": "struct", "size": 8, "members": 2},
-            {"ordinal": 3, "name": "TestUnion", "kind": "union", "size": 4, "members": 1},
-        ]
+        assert result["items"] == (
+            "TestStruct  size=8 members=2\n[union] TestUnion  size=4 members=1"
+        )
 
     def test_list_structs_uses_tinfo_numbered_type_method(self, monkeypatch):
         """IDA 9.3 loads numbered types through tinfo_t.get_numbered_type."""
@@ -421,31 +420,27 @@ class TestListStructs:
 
         result = api_types.list_structs.__wrapped__()
 
-        assert result["items"] == [
-            {"ordinal": 2, "name": "MethodStruct", "kind": "struct", "size": 8, "members": 1},
-        ]
+        assert result["items"] == "MethodStruct  size=8 members=1"
 
     def test_list_structs(self, tool_caller, declared_complex_fixture_types):
         """Test listing structs."""
         result = tool_caller("list_structs")
         assert isinstance(result, dict)
         assert "items" in result
-        names = {item["name"] for item in result["items"]}
+        names = {line.split("  ")[0] for line in result["items"].splitlines()}
         assert set(declared_complex_fixture_types).issubset(names)
 
         if result["items"]:
-            s = result["items"][0]
-            assert "name" in s
-            assert "kind" in s
-            assert "size" in s
-            assert "members" in s
+            first = result["items"].splitlines()[0]
+            assert first.split("  ")[0] and "size=" in first
+            assert "members=" in first
 
     def test_list_structs_with_pattern(self, tool_caller, declared_complex_fixture_types):
         """Test filtering structs by pattern."""
         result = tool_caller("list_structs", {"pattern": "IdaMcp"})
         assert isinstance(result, dict)
         assert "items" in result
-        names = {item["name"] for item in result["items"]}
+        names = {line.split("  ")[0] for line in result["items"].splitlines()}
         assert set(declared_complex_fixture_types).issubset(names)
 
 

@@ -173,10 +173,9 @@ class TestStructuredAnalysis:
         if "error" not in result:
             assert "items" in result
             assert "total" in result
-            assert isinstance(result["items"], list)
-            for item in result["items"]:
-                assert "address" in item
-                assert "call_sites" in item
+            # "name@0xADDR  xN @ 0xSITE, ..." text lines
+            for line in result["items"].splitlines():
+                assert "@" in line and "x" in line
 
     def test_get_callees_by_name(self, tool_caller, first_function_name):
         result = tool_caller("get_callees", {"addr": first_function_name})
@@ -184,10 +183,8 @@ class TestStructuredAnalysis:
         if "error" not in result:
             assert "items" in result
             assert "total" in result
-            assert isinstance(result["items"], list)
-            for item in result["items"]:
-                assert "address" in item
-                assert "call_sites" in item
+            for line in result["items"].splitlines():
+                assert "@" in line and "x" in line
 
     def test_get_function_signature(self, tool_caller, first_function_address):
         result = tool_caller("get_function_signature", {"addr": hex(first_function_address)})
@@ -201,7 +198,7 @@ class TestStructuredAnalysis:
         result = tool_caller("get_callees", {"addr": "ida_mcp_complex_dispatch"})
         assert isinstance(result, dict)
         assert "error" not in result
-        names = {item["name"] for item in result["items"]}
+        names = {line.split("@", 1)[0] for line in result["items"].splitlines()}
         assert result["total"] == complex_baseline["functions"]["ida_mcp_complex_dispatch"]["callee_count"]
         assert set(complex_baseline["relationships"]["complex_dispatch_callees"]) == names
 
@@ -209,7 +206,7 @@ class TestStructuredAnalysis:
         result = tool_caller("get_callers", {"addr": "ida_mcp_patch_target"})
         assert isinstance(result, dict)
         assert "error" not in result
-        names = {item["name"] for item in result["items"]}
+        names = {line.split("@", 1)[0] for line in result["items"].splitlines()}
         assert names == set(complex_baseline["relationships"]["patch_target_callers"])
 
     def test_stack_heavy_signature_matches_baseline(self, tool_caller, complex_baseline):
@@ -348,7 +345,9 @@ class TestFindBytes:
                 result = tool_caller("find_bytes", {"pattern": pattern, "limit": 5})
                 assert isinstance(result, dict)
                 if "matches" in result:
-                    assert isinstance(result["matches"], list)
+                    # text lines: "0xEA  BYTES  ; func" and total counts real hits
+                    assert isinstance(result["matches"], str)
+                    assert result["total"] >= 1
 
     def test_find_bytes_with_wildcard(self, tool_caller):
         """Test byte search with wildcard."""

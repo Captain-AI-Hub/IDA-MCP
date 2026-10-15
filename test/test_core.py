@@ -106,7 +106,7 @@ class TestFunctions:
         result = tool_caller("list_functions", {"offset": 0, "count": 10})
         assert "error" not in result
         assert "items" in result
-        assert len(result["items"]) <= 10
+        assert len(result["items"].splitlines()) <= 10
 
     def test_list_functions_offset(self, tool_caller, functions_cache):
         """Test offset parameter."""
@@ -117,14 +117,16 @@ class TestFunctions:
         result2 = tool_caller("list_functions", {"offset": 2, "count": 3})
 
         # The first item of the second query should equal the third item of the first query
-        if result1["items"] and result2["items"]:
-            assert result1["items"][2]["start_ea"] == result2["items"][0]["start_ea"]
+        lines1 = result1["items"].splitlines()
+        lines2 = result2["items"].splitlines()
+        if len(lines1) >= 3 and lines2:
+            assert lines1[2].split("  ")[0] == lines2[0].split("  ")[0]
 
     def test_list_functions_pattern(self, tool_caller, complex_baseline):
         """Test pattern filtering."""
         result = tool_caller("list_functions", {"offset": 0, "count": 100, "pattern": "ida_mcp"})
         assert "error" not in result
-        names = {item["name"] for item in result.get("items", [])}
+        names = {line.split("  ", 1)[1] for line in result.get("items", "").splitlines() if "  " in line}
         assert set(complex_baseline["functions"]).intersection(names)
 
     def test_list_functions_invalid_offset(self, tool_caller):
@@ -156,13 +158,13 @@ class TestGlobals:
         """Test pagination."""
         result = tool_caller("list_globals", {"offset": 0, "count": 5})
         assert "error" not in result
-        assert len(result.get("items", [])) <= 5
+        assert len(result.get("items", "").splitlines()) <= 5
 
     def test_list_globals_pattern(self, tool_caller, complex_baseline):
         """Test pattern filtering."""
         result = tool_caller("list_globals", {"offset": 0, "count": 100, "pattern": "ida_mcp"})
         assert "error" not in result
-        names = {item["name"] for item in result.get("items", [])}
+        names = {line.split("  ", 1)[1].split("  ")[0] for line in result.get("items", "").splitlines() if "  " in line}
         assert set(complex_baseline["globals"]).issubset(names)
 
 
@@ -187,7 +189,7 @@ class TestStrings:
         )
 
         assert "error" not in result
-        assert [item["text"] for item in result["items"]] == ["alpha1"]
+        assert result["items"].splitlines() == ["0x1000  alpha1"]
 
     def test_list_strings_invalid_regex_unit(self, monkeypatch):
         """Unit guard for invalid regex reporting."""
@@ -208,13 +210,17 @@ class TestStrings:
         """Test pagination."""
         result = tool_caller("list_strings", {"offset": 0, "count": 10})
         assert "error" not in result
-        assert len(result.get("items", [])) <= 10
+        assert len(result.get("items", "").splitlines()) <= 10
 
     def test_list_strings_pattern(self, tool_caller, strings_cache, complex_baseline):
         """Test content filtering."""
         result = tool_caller("list_strings", {"offset": 0, "count": 100, "pattern": "IDA_MCP_COMPLEX_SENTINEL"})
         assert "error" not in result
-        texts = {item["text"] for item in result.get("items", [])}
+        texts = {
+            line.split("  ", 1)[1].replace("\\n", "\n")
+            for line in result.get("items", "").splitlines()
+            if "  " in line
+        }
         expected = {
             text
             for text in complex_baseline["strings"]
@@ -234,7 +240,11 @@ class TestStrings:
             },
         )
         assert "error" not in result
-        texts = {item["text"] for item in result.get("items", [])}
+        texts = {
+            line.split("  ", 1)[1].replace("\\n", "\n")
+            for line in result.get("items", "").splitlines()
+            if "  " in line
+        }
         expected = {
             "IDA_MCP_COMPLEX_SENTINEL_ENTRY",
             "IDA_MCP_COMPLEX_SENTINEL_RECT",
@@ -292,11 +302,13 @@ class TestImports:
         assert "items" in result or "error" in result
 
         if "items" in result and result["items"]:
-            item = result["items"][0]
-            assert "name" in item
-            assert "module" in item
-            assert "ea" in item
-            names = {entry["name"] for entry in result["items"]}
+            # module-grouped text: "module: name, name, ..."
+            assert ": " in result["items"].splitlines()[0]
+            names = {
+                part.strip()
+                for line in result["items"].splitlines()
+                for part in line.split(": ", 1)[1].split(",")
+            }
             assert set(complex_baseline["imports"]["required_names"]).intersection(names)
 
     def test_list_imports_pagination(self, tool_caller):
@@ -304,7 +316,7 @@ class TestImports:
         result = tool_caller("list_imports", {"offset": 0, "count": 5})
         assert isinstance(result, dict)
         if "items" in result:
-            assert len(result["items"]) <= 5
+            assert len(result["items"].splitlines()) <= 5
 
     def test_list_imports_pattern(self, tool_caller):
         """Test filtering by pattern."""
@@ -322,16 +334,15 @@ class TestExports:
         assert "items" in result or "error" in result
 
         if "items" in result and result["items"]:
-            item = result["items"][0]
-            assert "name" in item
-            assert "ea" in item
+            first = result["items"].splitlines()[0]
+            assert first.startswith("0x") and "  " in first
 
     def test_list_exports_pagination(self, tool_caller):
         """Test pagination."""
         result = tool_caller("list_exports", {"offset": 0, "count": 5})
         assert isinstance(result, dict)
         if "items" in result:
-            assert len(result["items"]) <= 5
+            assert len(result["items"].splitlines()) <= 5
 
 
 class TestSegments:
@@ -344,26 +355,27 @@ class TestSegments:
         assert "items" in result
 
         if result["items"]:
-            seg = result["items"][0]
-            assert "name" in seg
-            assert "start_ea" in seg
-            assert "end_ea" in seg
-            assert "perm" in seg  # Permission string rwx
-            assert "size" in seg
+            first = result["items"].splitlines()[0]
+            parts = first.split("  ")
+            assert parts[0]  # name
+            assert parts[1].startswith("0x") and "-" in parts[1]  # start-end
+            assert len(parts[2]) == 3 and set(parts[2]) <= set("rwx-")  # perm
 
     def test_segments_have_code(self, tool_caller, complex_baseline):
         """Verify executable segments exist."""
         result = tool_caller("list_segments")
         assert isinstance(result, dict)
 
-        segments = result.get("items", [])
-        code_segs = [s for s in segments if 'x' in s.get('perm', '')]
+        lines = result.get("items", "").splitlines()
+        code_segs = [ln for ln in lines if "  " in ln and "x" in ln.split("  ")[2]]
         # Most binaries have executable segments
         print(f"Executable segments: {len(code_segs)}")
-        text = next((s for s in segments if s.get("name") == ".text"), None)
+        text = next((ln for ln in lines if ln.split("  ")[0] == ".text"), None)
         assert text is not None
-        assert text["start_ea"] == complex_baseline["segments"][".text"]["start_ea"]
-        assert text["end_ea"] == complex_baseline["segments"][".text"]["end_ea"]
+        start_end = text.split("  ")[1]
+        start, end = start_end.split("-")
+        assert start == complex_baseline["segments"][".text"]["start_ea"]
+        assert end == complex_baseline["segments"][".text"]["end_ea"]
 
     def test_add_segment(self, tool_caller, metadata):
         """Test adding a new segment."""

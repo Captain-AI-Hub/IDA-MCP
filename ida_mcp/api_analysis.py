@@ -500,12 +500,17 @@ def get_callers(
         return {"error": f"get_callers failed: {exc}", "query": addr}
 
     items = _sorted_group_items(groups)
+    lines = [
+        f"{it['name']}@{it['address']}  x{it['call_count']}"
+        + (f" @ {', '.join(it['call_sites'])}" if it.get("call_sites") else "")
+        for it in items
+    ]
     return {
         "function": info["name"],
         "start_ea": hex_addr(info["start_ea"]),
         "end_ea": hex_addr(info["end_ea"]),
         "total": len(items),
-        "items": items,
+        "items": "\n".join(lines),
     }
 
 
@@ -552,12 +557,17 @@ def get_callees(
         return {"error": f"get_callees failed: {exc}", "query": addr}
 
     items = _sorted_group_items(groups)
+    lines = [
+        f"{it['name']}@{it['address']}  x{it['call_count']}"
+        + (f" @ {', '.join(it['call_sites'])}" if it.get("call_sites") else "")
+        for it in items
+    ]
     return {
         "function": info["name"],
         "start_ea": hex_addr(info["start_ea"]),
         "end_ea": hex_addr(info["end_ea"]),
         "total": len(items),
-        "items": items,
+        "items": "\n".join(lines),
     }
 
 
@@ -993,9 +1003,11 @@ def find_bytes(
     
     result: dict = {
         "pattern": pattern_text,
-        "ida_pattern": ida_pattern,
         "total": len(matches),
-        "matches": matches,
+        "matches": "\n".join(
+            f"{m['ea']}  {m['bytes']}" + (f"  ; {m['function']}" if m.get("function") else "")
+            for m in matches
+        ),
     }
     if truncated:
         result["truncated"] = True
@@ -1145,7 +1157,7 @@ def find_regex(
 
     result: Dict[str, Any] = {
         "count": len(matches),
-        "items": matches,
+        "items": "\n".join(matches),
     }
     if truncated:
         result["truncated"] = True
@@ -1185,19 +1197,20 @@ def search_text(
         haystack = f"{text} ; {cmt}" if cmt else text
         if not haystack or not matcher(haystack):
             continue
-        matches.append({
-            "ea": hex_addr(head),
-            "text": text,
-            "comment": cmt or None,
-            "function": _function_name_at(head),
-        })
+        line = f"{hex_addr(head)}  {text}"
+        func = _function_name_at(head)
+        if func:
+            line += f"  ; {func}"
+        if cmt:
+            line += f"  // {cmt}"
+        matches.append(line)
         if len(matches) >= max(1, limit):
             truncated = True
             break
 
     result: Dict[str, Any] = {
         "count": len(matches),
-        "items": matches,
+        "items": "\n".join(matches),
     }
     if truncated:
         result["truncated"] = True
@@ -1235,19 +1248,18 @@ def find_instructions(
             continue
         if rx is not None and not rx.search(text):
             continue
-        matches.append({
-            "ea": hex_addr(head),
-            "mnemonic": mnem,
-            "text": text,
-            "function": _function_name_at(head),
-        })
+        line = f"{hex_addr(head)}  {text}"
+        func = _function_name_at(head)
+        if func:
+            line += f"  ; {func}"
+        matches.append(line)
         if len(matches) >= max(1, limit):
             truncated = True
             break
 
     result: Dict[str, Any] = {
         "count": len(matches),
-        "items": matches,
+        "items": "\n".join(matches),
     }
     if truncated:
         result["truncated"] = True

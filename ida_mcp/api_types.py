@@ -677,7 +677,12 @@ def list_structs(
     except Exception:
         pass
 
-    return {"total": len(items), "items": items}
+    lines = [
+        (f"[{it['kind']}] " if it.get("kind") not in (None, "struct") else "")
+        + f"{it['name']}  size={it.get('size', 0)} members={it.get('members', 0)}"
+        for it in items
+    ]
+    return {"total": len(items), "items": "\n".join(lines)}
 
 
 # ============================================================================

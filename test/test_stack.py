@@ -96,20 +96,24 @@ class TestStackFrame:
         assert "start_ea" in frame_info
         assert "variables" in frame_info
         assert frame_info.get("method") == "ida_frame"
-        assert isinstance(frame_info.get("local_variables", []), list)
-        variables = {var["name"]: var for var in frame_info["variables"]}
+        assert isinstance(frame_info.get("local_variables", ""), str)
+        # variables render as "offset  name  type  (sizeB)" text lines
+        variables = {}
+        for line in frame_info["variables"].splitlines():
+            parts = line.split("  ")
+            if len(parts) >= 3:
+                variables[parts[1]] = {"offset": int(parts[0]) if parts[0].lstrip("-").isdigit() else None}
         expected = complex_baseline["stack_frame"]["ida_mcp_stack_heavy_transform"]
         for name in expected["required_variables"]:
             assert name in variables
         for name, offset in expected["variable_offsets"].items():
             assert variables[name]["offset"] == offset
 
-        # If variables exist, verify variable structure
+        # every line carries a name and a type column
         if frame_info.get("variables"):
-            for var in frame_info["variables"]:
-                assert "name" in var
-                # Variable may be on stack (has offset) or in register (has location)
-                assert "offset" in var or var.get("location") == "register"
+            for line in frame_info["variables"].splitlines():
+                parts = line.split("  ")
+                assert len(parts) >= 3
 
 
 class TestDeclareStack:

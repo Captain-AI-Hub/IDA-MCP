@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -129,6 +130,17 @@ def _session_call(ida_instance, tool: str, params: dict) -> Any:
     return bridge_client.call_tool(ida_instance, tool, params)
 
 
+def _parse_lines(text: str) -> List[str]:
+    return [line for line in str(text).splitlines() if line]
+
+
+def _parse_addr_name(line: str) -> Dict[str, str]:
+    """'0xEA  name' or '0xEA  name  (NB)' or '0xSTART-0xEND  name'."""
+    head, _, rest = line.partition("  ")
+    start = head.split("-")[0]
+    return {"ea": start, "start_ea": start, "name": rest.split("  ")[0].strip()}
+
+
 @pytest.fixture(scope="session")
 def baseline_function(complex_baseline, functions_cache):
     def _get(name: str) -> Dict[str, Any]:
@@ -177,7 +189,7 @@ def functions_cache(ida_instance) -> List[Dict[str, Any]]:
     result = _session_call(ida_instance, "list_functions", {"offset": 0, "count": 100})
     if "error" in result:
         pytest.skip(f"Cannot list functions: {result['error']}")
-    return result.get("items", [])
+    return [_parse_addr_name(line) for line in _parse_lines(result.get("items", ""))]
 
 
 @pytest.fixture(scope="session")
@@ -185,7 +197,12 @@ def strings_cache(ida_instance) -> List[Dict[str, Any]]:
     result = _session_call(ida_instance, "list_strings", {"offset": 0, "count": 100})
     if "error" in result:
         pytest.skip(f"Cannot list strings: {result['error']}")
-    return result.get("items", [])
+    items = []
+    for line in _parse_lines(result.get("items", "")):
+        head, _, text = line.partition("  ")
+        text = re.sub(r"\s*\[[^\]]+\]$", "", text)  # trailing [type] marker
+        items.append({"ea": head, "text": text.strip()})
+    return items
 
 
 @pytest.fixture(scope="session")
@@ -193,7 +210,7 @@ def globals_cache(ida_instance) -> List[Dict[str, Any]]:
     result = _session_call(ida_instance, "list_globals", {"offset": 0, "count": 1000})
     if "error" in result:
         pytest.skip(f"Cannot list globals: {result['error']}")
-    return result.get("items", [])
+    return [_parse_addr_name(line) for line in _parse_lines(result.get("items", ""))]
 
 
 @pytest.fixture(scope="session")
@@ -201,7 +218,7 @@ def entry_points_cache(ida_instance) -> List[Dict[str, Any]]:
     result = _session_call(ida_instance, "get_entry_points", {})
     if "error" in result:
         return []
-    return result.get("items", [])
+    return [_parse_addr_name(line) for line in _parse_lines(result.get("items", ""))]
 
 
 @pytest.fixture(scope="session")
@@ -209,7 +226,7 @@ def local_types_cache(ida_instance) -> List[Dict[str, Any]]:
     result = _session_call(ida_instance, "list_local_types", {})
     if "error" in result:
         return []
-    return result.get("items", [])
+    return [{"decl": line} for line in _parse_lines(result.get("items", ""))]
 
 
 # ============================================================================
