@@ -76,12 +76,6 @@ MCP 客户端配置（HCLI/安装器安装完成后打印同款，可直接复�
 若还没有激活的运行时：`pip install <IDA>/idalib/python/idapro-*.whl` 后运行
 `python <IDA>/py-activate-idalib.py`。
 
-> **关于 `~/.idapro/venv` 一直没生效**：IDA 通过 idapyswitch 选定的
-> `libpython3.12.so`（注册于 `~/.idapro/ida.reg` 的 `Python3TargetDLL`）加载
-> Python，不读取任何 venv；venv 本身也没有自己的 libpython，所以对 IDA 永远
-> 不可见，也不存在“每次激活”一说。对 IDA 唯一生效的是 `Python3TargetDLL`
-> 指向的那套安装。新架构下 IDA 内零依赖，该问题不复存在；这个 venv 仅当其中
-> 装有 idapro 包时才会被选作无头 worker 解释器。
 
 ## CLI
 
