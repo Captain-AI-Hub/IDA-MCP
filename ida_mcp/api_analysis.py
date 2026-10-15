@@ -24,7 +24,7 @@ from typing import Annotated, Optional, List, Dict, Any, Union
 
 from .rpc import tool
 from .sync import idaread, wait_for_auto_analysis
-from .utils import parse_address, hex_addr
+from .utils import parse_address, resolve_address, hex_addr
 from .analysis_utils import decompile_with_error as _decompile_with_error
 from . import ida_shims
 
@@ -59,7 +59,7 @@ except ImportError:
 
 def _resolve_function(query: Union[int, str]) -> dict:
     """Resolve a function by address or symbol name."""
-    parsed = parse_address(query)
+    parsed = resolve_address(query)
     if parsed["ok"] and parsed["value"] is not None:
         ea = parsed["value"]
     else:
@@ -405,7 +405,7 @@ def linear_disasm(
     if count < 1 or count > 64:
         return {"error": "count out of range (1..64)"}
     
-    parsed = parse_address(start_address)
+    parsed = resolve_address(start_address)
     if not parsed["ok"] or parsed["value"] is None:
         return {"error": parsed["error"] or "invalid start_address"}
     
@@ -619,7 +619,7 @@ def xrefs_to(
 
 def _xrefs_to_single(query: str) -> dict:
     """Get cross-references to a single address."""
-    parsed = parse_address(query)
+    parsed = resolve_address(query)
     if not parsed["ok"] or parsed["value"] is None:
         return {"error": "invalid address", "query": query}
     
@@ -669,7 +669,7 @@ def xrefs_from(
 
 def _xrefs_from_single(query: str) -> dict:
     """Get outgoing cross-references from a single address."""
-    parsed = parse_address(query)
+    parsed = resolve_address(query)
     if not parsed["ok"] or parsed["value"] is None:
         return {"error": "invalid address", "query": query}
     
@@ -704,14 +704,58 @@ def xrefs_from_address(query: Union[int, str]) -> dict:
 # Struct field references
 # ============================================================================
 
+def _typed_field_access(ea: int, struct_name: str, target_off: int) -> bool:
+    """True when an operand at ``ea`` is typed as ``struct_name`` and its
+    displacement equals ``target_off`` (type-confirmed field access)."""
+    try:
+        import ida_nalt
+        import ida_ua
+
+        insn = ida_ua.insn_t()
+        if ida_ua.decode_insn(insn, ea) <= 0:
+            return False
+        for n in range(8):
+            op = insn.ops[n]
+            if op.type == ida_ua.o_void:
+                break
+            tif = ida_typeinf.tinfo_t()
+            try:
+                if not ida_nalt.get_op_tinfo(tif, ea, n):
+                    continue
+            except Exception:
+                continue
+            if tif.is_ptr():
+                pointed = tif.get_pointed_object()
+                if pointed is not None and not pointed.empty():
+                    tif = pointed
+            try:
+                type_name = tif.get_type_name() or ""
+            except Exception:
+                type_name = ""
+            if type_name != struct_name:
+                continue
+            try:
+                disp = op.addr if op.type in (ida_ua.o_displ, ida_ua.o_phrase) else op.value
+            except Exception:
+                disp = None
+            if disp == target_off:
+                return True
+        return False
+    except Exception:
+        return False
+
+
 @tool
 @idaread
 def xrefs_to_field(
     struct_name: Annotated[str, "Struct name"],
     field_name: Annotated[str, "Field name"],
     limit: Annotated[int, "Maximum matches to return (1..500)"] = 50,
+    strict: Annotated[bool, "Only report type-confirmed accesses (operand typed as the struct)"] = False,
 ) -> dict:
-    """Heuristic search for struct field references."""
+    """Search struct field references. Heuristic by default (name/offset text
+    matching); strict=true keeps only accesses whose operand carries the
+    struct type with the matching displacement."""
     if not struct_name or not field_name:
         return {"error": "empty struct_name or field_name"}
     if limit < 1 or limit > 500:
@@ -782,7 +826,11 @@ def xrefs_to_field(
                             hit = True
                     
                     if hit:
-                        matches.append({'ea': hex_addr(ea), 'line': _listing_text(ea) or line})
+                        typed = _typed_field_access(ea, struct_name, target_off)
+                        if strict and not typed:
+                            continue
+                        entry = {'ea': hex_addr(ea), 'line': _listing_text(ea) or line, 'typed': typed}
+                        matches.append(entry)
                         if len(matches) >= limit:
                             truncated = True
                             break
@@ -797,13 +845,18 @@ def xrefs_to_field(
         'struct': struct_name,
         'field': field_name,
         'offset': int(target_off) if target_off is not None else None,
+        'strict': bool(strict),
         'matches': matches,
     }
     if truncated:
         result['truncated'] = True
     if not matches:
-        result['note'] = 'no heuristic matches (may be optimized code or indirect access)'
-    
+        result['note'] = (
+            'no type-confirmed accesses (strict mode)'
+            if strict
+            else 'no heuristic matches (may be optimized code or indirect access; try strict=false/true)'
+        )
+
     return result
 
 
@@ -831,12 +884,12 @@ def find_bytes(
     end_ea = None
     
     if start:
-        parsed = parse_address(start)
+        parsed = resolve_address(start)
         if parsed["ok"] and parsed["value"] is not None:
             start_ea = parsed["value"]
     
     if end:
-        parsed = parse_address(end)
+        parsed = resolve_address(end)
         if parsed["ok"] and parsed["value"] is not None:
             end_ea = parsed["value"]
     
@@ -1311,7 +1364,7 @@ def trace_data_flow(
     max_nodes: Annotated[int, "Maximum nodes to include"] = 200,
 ) -> dict:
     """Trace data references (reads/writes/offsets) to and from an address."""
-    parsed = parse_address(address)
+    parsed = resolve_address(address)
     if parsed["ok"] and parsed["value"] is not None:
         start = parsed["value"]
     else:

@@ -24,7 +24,7 @@ from typing import Annotated, Optional, List, Dict, Any, Union
 
 from .rpc import tool
 from .sync import idaread, idawrite
-from .utils import parse_address, normalize_list_input, hex_addr
+from .utils import parse_address, resolve_address, normalize_list_input, hex_addr
 from . import ida_shims
 
 # IDA module imports
@@ -411,7 +411,7 @@ def dbg_run_to(
     addr: Annotated[Union[int, str], "Target address to run to"],
 ) -> dict:
     """Run debugger to specific address."""
-    parsed = parse_address(addr)
+    parsed = resolve_address(addr)
     if not parsed["ok"] or parsed["value"] is None:
         return {"error": "invalid address"}
     
@@ -523,7 +523,7 @@ def dbg_add_bp(
 
 def _set_breakpoint_single(query: str) -> dict:
     """Set a single breakpoint."""
-    parsed = parse_address(query)
+    parsed = resolve_address(query)
     if not parsed["ok"] or parsed["value"] is None:
         return {"error": "invalid address", "query": query}
     
@@ -595,7 +595,7 @@ def dbg_delete_bp(
 
 def _delete_breakpoint_single(query: str) -> dict:
     """Delete a single breakpoint."""
-    parsed = parse_address(query)
+    parsed = resolve_address(query)
     if not parsed["ok"] or parsed["value"] is None:
         return {"error": "invalid address", "query": query}
     
@@ -651,7 +651,7 @@ def dbg_enable_bp(
             results.append({"error": "invalid address"})
             continue
         
-        parsed = parse_address(addr)
+        parsed = resolve_address(addr)
         if not parsed["ok"] or parsed["value"] is None:
             results.append({"error": "invalid address"})
             continue
@@ -843,7 +843,7 @@ def dbg_read_mem(
             results.append({"error": "invalid address", "region": region})
             continue
         
-        parsed = parse_address(addr)
+        parsed = resolve_address(addr)
         if not parsed["ok"] or parsed["value"] is None:
             results.append({"error": "invalid address", "region": region})
             continue
@@ -914,7 +914,7 @@ def dbg_write_mem(
             results.append({"error": "invalid address", "region": region})
             continue
         
-        parsed = parse_address(addr)
+        parsed = resolve_address(addr)
         if not parsed["ok"] or parsed["value"] is None:
             results.append({"error": "invalid address", "region": region})
             continue

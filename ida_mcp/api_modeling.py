@@ -15,7 +15,7 @@ from typing import Annotated, Optional, Union, Dict, Any, Tuple
 from .rpc import tool
 from .strings_cache import invalidate_strings_cache
 from .sync import idawrite, wait_for_auto_analysis
-from .utils import parse_address, hex_addr
+from .utils import parse_address, resolve_address, hex_addr
 from . import ida_shims
 
 try:
@@ -63,7 +63,7 @@ def _invalidate_strings_cache() -> None:
 
 
 def _resolve_address(value: Union[int, str], field: str) -> Tuple[Optional[int], Optional[dict]]:
-    parsed = parse_address(value)
+    parsed = resolve_address(value)
     if not parsed["ok"] or parsed["value"] is None:
         return None, _error(f"invalid {field}", **{field: value})
     return int(parsed["value"]), None

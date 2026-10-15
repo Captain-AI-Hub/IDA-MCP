@@ -11,7 +11,7 @@ from typing import Annotated, Optional, List, Dict, Any, Union
 
 from .rpc import tool
 from .sync import idaread
-from .utils import parse_address, normalize_list_input, hex_addr
+from .utils import parse_address, resolve_address, normalize_list_input, hex_addr
 
 # IDA module imports
 try:
@@ -44,7 +44,7 @@ def get_bytes(
     results = []
     
     for query in queries:
-        parsed = parse_address(query)
+        parsed = resolve_address(query)
         address = parsed["value"] if parsed["ok"] else None
         if address is None:
             # Fall back to symbol-name resolution, matching the other tools
@@ -103,7 +103,7 @@ def _read_scalar(addr: Union[int, str], width: int, signed: bool = False) -> Lis
     results = []
     
     for query in queries:
-        parsed = parse_address(query)
+        parsed = resolve_address(query)
         address = parsed["value"] if parsed["ok"] else None
         if address is None:
             # Fall back to symbol-name resolution, matching the other tools
@@ -164,7 +164,7 @@ def get_string(
     results = []
     
     for query in queries:
-        parsed = parse_address(query)
+        parsed = resolve_address(query)
         address = parsed["value"] if parsed["ok"] else None
         if address is None:
             # Fall back to symbol-name resolution, matching the other tools

@@ -19,7 +19,7 @@ from typing import Annotated, Optional, List, Dict, Any, Union
 from .rpc import tool
 from .sync import idaread, idawrite, wait_for_auto_analysis
 from .type_utils import iter_local_type_ordinals
-from .utils import parse_address, is_valid_c_identifier, hex_addr
+from .utils import parse_address, resolve_address, is_valid_c_identifier, hex_addr
 from . import ida_shims
 
 # IDA module imports
@@ -333,7 +333,7 @@ def set_function_prototype(
     if not prototype or not prototype.strip():
         return {"error": "empty prototype"}
     
-    parsed = parse_address(str(function_address))
+    parsed = resolve_address(str(function_address))
     if not parsed["ok"] or parsed["value"] is None:
         return {"error": "invalid function_address"}
     
@@ -440,7 +440,7 @@ def set_local_variable_type(
     if not new_type or not new_type.strip():
         return {"error": "empty new_type"}
     
-    parsed = parse_address(str(function_address))
+    parsed = resolve_address(str(function_address))
     if not parsed["ok"] or parsed["value"] is None:
         return {"error": "invalid function_address"}
     
@@ -788,7 +788,7 @@ def infer_types(
     """Guess the type at each address with IDA's type inference and apply it as a guessed type."""
     results = []
     for query in normalize_list_input(addresses):
-        parsed = parse_address(query)
+        parsed = resolve_address(query)
         if parsed["ok"] and parsed["value"] is not None:
             ea = parsed["value"]
         else:

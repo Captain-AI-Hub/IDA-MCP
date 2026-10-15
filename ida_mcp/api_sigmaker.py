@@ -18,7 +18,7 @@ except ImportError:  # pragma: no cover
 
 from .rpc import tool
 from .sync import idaread
-from .utils import parse_address, normalize_list_input
+from .utils import parse_address, resolve_address, normalize_list_input
 from . import ida_shims
 
 def _get_sigmaker():
@@ -68,7 +68,7 @@ def _make_config(
 
 def _resolve_addr(addr_str: str) -> int:
     """Resolve an address string or name to an ea."""
-    parsed = parse_address(addr_str)
+    parsed = resolve_address(addr_str)
     if parsed["ok"] and parsed["value"] is not None:
         return int(parsed["value"])
     ea = idaapi.get_name_ea(idaapi.BADADDR, addr_str)

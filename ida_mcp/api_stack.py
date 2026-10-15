@@ -11,7 +11,7 @@ from typing import Annotated, Optional, List, Dict, Any, Union
 
 from .rpc import tool
 from .sync import idaread, idawrite, wait_for_auto_analysis
-from .utils import parse_address, normalize_list_input, hex_addr, is_valid_c_identifier
+from .utils import parse_address, resolve_address, normalize_list_input, hex_addr, is_valid_c_identifier
 from . import ida_shims
 
 # IDA module imports
@@ -188,7 +188,7 @@ def stack_frame(
 
 def _stack_frame_single(query: str) -> dict:
     """Get stack frame info for a single function."""
-    parsed = parse_address(query)
+    parsed = resolve_address(query)
     if not parsed["ok"]:
         # try as function name
         try:
@@ -354,7 +354,7 @@ def declare_stack(
             continue
         
         # parse function address
-        parsed = parse_address(func_addr)
+        parsed = resolve_address(func_addr)
         if not parsed["ok"] or parsed["value"] is None:
             results.append({"error": "invalid function_address", "item": item})
             continue
@@ -433,7 +433,7 @@ def delete_stack(
             results.append({"error": "missing required fields", "item": item})
             continue
         
-        parsed = parse_address(func_addr)
+        parsed = resolve_address(func_addr)
         if not parsed["ok"] or parsed["value"] is None:
             results.append({"error": "invalid function_address", "item": item})
             continue

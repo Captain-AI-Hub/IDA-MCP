@@ -132,6 +132,36 @@ def parse_address(value: Union[int, str]) -> ParseResult:
     return {"ok": False, "value": None, "error": "invalid address type"}
 
 
+
+
+def resolve_address(query) -> dict:
+    """Resolve hex/decimal address OR symbol name to an EA.
+
+    Shared entry point for every ``address``/``addr``/``function_address``
+    tool parameter: numeric forms first, then idaapi.get_name_ea for symbol
+    names (functions, globals, string names). Returns the same shape as
+    parse_address plus ``resolved_by`` ("address" or "name").
+    """
+    parsed = parse_address(query)
+    if parsed.get("ok") and parsed.get("value") is not None:
+        return {"ok": True, "value": parsed["value"], "error": None, "resolved_by": "address"}
+
+    try:
+        import idaapi  # lazy: utils is imported outside IDA too
+
+        ea = idaapi.get_name_ea(idaapi.BADADDR, str(query))
+        if ea is not None and ea != idaapi.BADADDR:
+            return {"ok": True, "value": ea, "error": None, "resolved_by": "name"}
+    except Exception:
+        pass
+
+    return {
+        "ok": False,
+        "value": None,
+        "error": parsed.get("error") or "invalid address or name",
+        "resolved_by": None,
+    }
+
 def hex_addr(addr: Union[int, str]) -> str:
     """Format an integer address as a hexadecimal string.
 

@@ -43,8 +43,9 @@
 
 ### 1.4 地址参数约定
 
-接受地址的工具统一支持 `"0x140001000"`、十进制字符串、整数及
-`"main"`/`"sub_140001FB0"` 等名字（由各工具自行解析，见 `utils.parse_address`）。
+所有接受地址的工具（`address` / `addr` / `function_address` / `start` 等）
+统一走 `utils.resolve_address`：十六进制/十进制/整数，解析失败后回退
+`idaapi.get_name_ea` 符号名解析（函数名、全局名、字符串名如 `aIdaMcpTest`）。
 
 ## 2. 实例桥协议（内部，固定 127.0.0.1:13337 起递增）
 
@@ -112,7 +113,9 @@ idalib worker 中调用进入主线程队列串行执行（SDK 仅允许主线�
   `get_entry_points`、`convert_number`、`list_imports/exports/segments`、
   `add_segment`、`delete_segment`、`get_cursor`、`survey_binary`
 - **Analysis**：`decompile`、`disasm`、`linear_disasm`、`get_callers/callees`、
-  `get_function_signature`、`xrefs_to/from`、`xrefs_to_field`、`find_bytes`、
+  `get_function_signature`、`xrefs_to/from`、`xrefs_to_field`（`strict=true` 仅保留操作数带结构体类型
+信息的命中，过滤 `[reg+disp]` 文本误报；默认启发式并给每条命中标注
+`typed`）、`find_bytes`、
   `get_basic_blocks`、`find_regex`、`search_text`、`find_instructions`、
   `callgraph`、`trace_data_flow`、签名系列（`make_signature*`、`find_xref_signatures`）
 - **Memory**：`get_bytes`、`read_scalar`、`get_string`

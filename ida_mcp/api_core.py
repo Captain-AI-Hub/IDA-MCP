@@ -27,7 +27,7 @@ from typing import Annotated, Optional, List
 from .rpc import tool
 from .sync import idaread, idawrite
 from .type_utils import iter_local_type_ordinals
-from .utils import paginate, pattern_filter, normalize_arch, hex_addr, parse_address
+from .utils import paginate, pattern_filter, normalize_arch, hex_addr, parse_address, resolve_address
 from . import ida_shims
 from .strings_cache import (
     get_strings_cache as _shared_get_strings_cache,
@@ -580,7 +580,7 @@ def add_segment(
     bitness: Annotated[int, "Address size: 16, 32, or 64"] = 64,
 ) -> dict:
     """Add a new memory segment to the IDB."""
-    parsed = parse_address(start_ea)
+    parsed = resolve_address(start_ea)
     if not parsed["ok"] or parsed["value"] is None:
         return {"error": "invalid start_ea"}
 
@@ -637,7 +637,7 @@ def delete_segment(
     flags: Annotated[int, "Deletion flags (0=normal, 1=SEGMOD_KILL: disable addresses)"] = 0,
 ) -> dict:
     """Delete a memory segment from the IDB."""
-    parsed = parse_address(address)
+    parsed = resolve_address(address)
     if not parsed["ok"] or parsed["value"] is None:
         return {"error": "invalid address"}
 

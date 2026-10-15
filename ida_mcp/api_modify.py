@@ -23,7 +23,7 @@ from typing import Annotated, Optional, List, Dict, Any, Union
 from .rpc import tool
 from .strings_cache import invalidate_strings_cache
 from .sync import idaread, idawrite, wait_for_auto_analysis
-from .utils import parse_address, is_valid_c_identifier, normalize_list_input, hex_addr
+from .utils import parse_address, resolve_address, is_valid_c_identifier, normalize_list_input, hex_addr
 from . import ida_shims
 
 # IDA module imports
@@ -82,7 +82,7 @@ def set_comment(
             results.append({"error": "invalid address", "address": address})
             continue
         
-        parsed = parse_address(address)
+        parsed = resolve_address(address)
         if not parsed["ok"] or parsed["value"] is None:
             results.append({"error": "invalid address", "address": address})
             continue
@@ -157,7 +157,7 @@ def rename_function(
 
         # method 2: try to parse as address
         if fstart is None:
-            parsed = parse_address(str(address))
+            parsed = resolve_address(str(address))
             if parsed["ok"] and parsed["value"] is not None:
                 addr = parsed["value"]
                 try:
@@ -220,7 +220,7 @@ def rename_local_variable(
     if not new_name:
         return {"error": "empty new_name"}
     
-    parsed = parse_address(str(function_address))
+    parsed = resolve_address(str(function_address))
     if not parsed["ok"] or parsed["value"] is None:
         return {"error": "invalid function_address"}
     
@@ -389,7 +389,7 @@ def patch_bytes(
             results.append({"error": "invalid address", "item": item})
             continue
         
-        parsed = parse_address(address)
+        parsed = resolve_address(address)
         if not parsed["ok"] or parsed["value"] is None:
             results.append({"error": "invalid address", "address": address})
             continue
@@ -656,7 +656,7 @@ def add_bookmark(
     description: Annotated[str, "Bookmark description"] = "",
 ) -> dict:
     """Add an IDA bookmark at an address (visible in the bookmarks view)."""
-    parsed = parse_address(address)
+    parsed = resolve_address(address)
     if not parsed["ok"] or parsed["value"] is None:
         return {"error": "invalid address", "address": address}
     ea = parsed["value"]
@@ -742,7 +742,7 @@ def patch_asm(
         address = item.get("address")
         asm_text = str(item.get("asm", "") or "").strip()
 
-        parsed = parse_address(address)
+        parsed = resolve_address(address)
         if not parsed["ok"] or parsed["value"] is None:
             results.append({"error": "invalid address", "address": address})
             continue
@@ -834,7 +834,7 @@ def set_op_type(
         except (TypeError, ValueError):
             operand = 0
 
-        parsed = parse_address(address)
+        parsed = resolve_address(address)
         if not parsed["ok"] or parsed["value"] is None:
             results.append({"error": "invalid address", "address": address})
             continue
@@ -888,7 +888,7 @@ def force_recompile(
     dirty_supported = hasattr(ida_hexrays, "mark_cfunc_dirty")
     results = []
     for query in queries:
-        parsed = parse_address(query)
+        parsed = resolve_address(query)
         if parsed["ok"] and parsed["value"] is not None:
             ea = parsed["value"]
         else:
