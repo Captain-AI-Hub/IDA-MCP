@@ -93,3 +93,17 @@ def test_pid_alive_self_and_missing():
 def test_state_dir_respects_env(tmp_path, monkeypatch):
     monkeypatch.setenv("IDA_MCP_STATE_DIR", str(tmp_path / "custom"))
     assert instances.get_instances_path() == tmp_path / "custom" / "instances.json"
+
+
+def test_lease_add_remove_holders():
+    import os as _os
+
+    iid = "i-lease-test"
+    assert instances.lease_holders(iid) == []
+    instances.lease_add(iid, _os.getpid())
+    instances.lease_add(iid, 999999999)  # dead pid is pruned
+    assert instances.lease_holders(iid) == [_os.getpid()]
+    instances.lease_remove(iid, 424242)  # unknown pid changes nothing
+    assert instances.lease_holders(iid) == [_os.getpid()]
+    instances.lease_remove(iid, _os.getpid())
+    assert instances.lease_holders(iid) == []

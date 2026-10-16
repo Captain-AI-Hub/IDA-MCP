@@ -124,3 +124,36 @@ def test_no_http_transport_remains():
     """stdio is the only transport; the HTTP serving path is deleted."""
     assert not hasattr(mcp_server, "serve_http")
     assert not hasattr(mcp_server, "serve")
+
+
+def test_stale_selection_refuses_silent_switch(monkeypatch, tmp_path):
+    """A dead explicit selection must error, not fall through to another DB."""
+    from ida_mcp import bridge_client as bc
+    from ida_mcp import instances as instances_mod
+
+    dead = {"instance_id": "i-dead", "port": 13399, "pid": 1}
+    other = {"instance_id": "i-other", "port": 13400, "pid": 2}
+    monkeypatch.setattr(instances_mod, "list_live_instances", lambda: [other])
+    monkeypatch.setattr(bc, "is_alive", lambda entry: entry["instance_id"] == "i-other")
+    mcp_server._select_entry(dead)
+
+    result = mcp_server.forward("sample_tool", {})
+    assert result["error"]["code"] == "instance_gone"
+    assert "i-dead" in result["error"]["message"]
+
+    # No selection at all -> auto-pick still works.
+    mcp_server._select_entry(None)
+    picked = mcp_server.resolve_instance()
+    assert picked and picked["instance_id"] == "i-other"
+
+
+def test_close_database_respects_other_holders(tmp_path, monkeypatch):
+    """Shared headless worker survives close while another pid holds a lease."""
+    from ida_mcp import lifecycle as lc
+
+    entry = {"instance_id": "i-shared", "pid": 999, "port": 13401, "headless": True}
+    monkeypatch.setattr(lc.instances, "lease_holders", lambda iid: [424242])
+    monkeypatch.setattr(lc.instances, "lease_remove", lambda iid, pid: None)
+    result = lc.close_database(entry, terminate=False, save=False)
+    assert result["status"] == "released"
+    assert result["remaining_users"] == 1

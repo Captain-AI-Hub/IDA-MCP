@@ -23,6 +23,7 @@ from __future__ import annotations
 import functools
 import inspect
 import json
+import os
 import threading
 from typing import Annotated, Any, Dict, List, Optional, get_args, get_origin, get_type_hints
 
@@ -40,6 +41,7 @@ _MANAGED_TOOL_NAMES = {"check_connection", "list_instances", "close_ida"}
 
 _LOCK = threading.RLock()
 _SELECTED: Optional[Dict[str, Any]] = None
+_LEASED: set = set()  # instance ids this server process holds a lease on
 _DOCS_INDEX: Optional[DocsIndex] = None
 _DOCS_INSTANCE_ID: Optional[str] = None
 
@@ -65,6 +67,10 @@ def _select_entry(entry: Optional[Dict[str, Any]]) -> None:
         if entry is None or entry.get("instance_id") != _DOCS_INSTANCE_ID:
             _DOCS_INDEX = None
             _DOCS_INSTANCE_ID = None
+    # Hold a lease from selection/open time, not just forwarded calls, so
+    # close_database by another agent sees us as an active user.
+    if entry is not None:
+        _lease(entry)
 
 
 def set_selected(instance_id: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -89,16 +95,37 @@ def resolve_instance(instance_id: Optional[str] = None) -> Optional[Dict[str, An
         entry = instances.find_by_id(str(instance_id))
         if entry is None or not bridge_client.is_alive(entry):
             return None
+        _lease(entry)
         return entry
     if selected is not None and bridge_client.is_alive(selected):
+        _lease(selected)
         return selected
-    # Auto-select the most recently started live instance.
+    # Auto-select only when no explicit selection existed; a dead explicit
+    # selection must NOT silently fall through to another database.
+    if selected is not None:
+        return None
     live = [e for e in instances.list_live_instances() if bridge_client.is_alive(e)]
     if live:
         entry = live[-1]
         _select_entry(entry)
+        _lease(entry)
         return entry
     return None
+
+
+def _lease(entry: Optional[Dict[str, Any]]) -> None:
+    """Record cross-process usage so close_database knows who is active."""
+    instance_id = str((entry or {}).get("instance_id") or "")
+    if not instance_id:
+        return
+    with _LOCK:
+        if instance_id in _LEASED:
+            return
+        _LEASED.add(instance_id)
+    try:
+        instances.lease_add(instance_id, os.getpid())
+    except Exception:  # noqa: BLE001 - leases are best effort
+        pass
 
 
 def forward(
@@ -110,6 +137,16 @@ def forward(
     """Call one backend tool on the resolved instance."""
     entry = resolve_instance(instance_id)
     if entry is None:
+        with _LOCK:
+            stale = _SELECTED
+        if stale is not None:
+            return error_payload(
+                "instance_gone",
+                f"Previously selected instance {stale.get('instance_id')} "
+                f"({stale.get('input_file') or 'unknown file'}) is no longer "
+                "running. Re-select with list_databases()/select_database() — "
+                "refusing to silently switch to a different database.",
+            )
         return error_payload(
             "no_instance",
             "No live IDA instance available. Call open_database() first or select an instance via list_databases().",

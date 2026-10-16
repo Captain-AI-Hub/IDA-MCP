@@ -485,12 +485,29 @@ def close_database(
         managed = _MANAGED.get(pid)
     headless = bool(instance_entry.get("headless"))
 
-    should_terminate = terminate or headless or bool(managed and managed.get("headless"))
+    # Release our lease first; only the last active user (or terminate=true)
+    # may shut a shared headless worker down.
+    holders: List[int] = []
+    if instance_id is not None:
+        try:
+            instances.lease_remove(str(instance_id), os.getpid())
+        except Exception:  # noqa: BLE001 - leases are best effort
+            pass
+        try:
+            holders = instances.lease_holders(str(instance_id))
+        except Exception:  # noqa: BLE001
+            holders = []
+
+    should_terminate = terminate or bool((managed or {}).get("headless")) or (
+        headless and not holders
+    )
     if not should_terminate:
         return {
-            "status": "detached",
+            "status": "released",
             "instance_id": instance_id,
-            "message": "Instance left running; call again with terminate=true to close IDA.",
+            "remaining_users": len(holders),
+            "message": "Other agents are still using this instance; it stays "
+                       "running. Call again with terminate=true to force-close.",
         }
 
     try:

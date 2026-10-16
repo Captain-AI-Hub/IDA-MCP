@@ -280,6 +280,74 @@ def remove_instance(instance_id: str) -> None:
 
 
 # ============================================================================
+# Cross-process usage leases (who is currently using an instance)
+# ============================================================================
+
+
+def _leases_path() -> Path:
+    return get_state_dir() / "leases.json"
+
+
+def _read_leases() -> Dict[str, List[int]]:
+    try:
+        document = json.loads(_leases_path().read_text(encoding="utf-8"))
+        leases = document.get("leases", {})
+        return {k: v for k, v in leases.items() if isinstance(v, list)} if isinstance(leases, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _prune_lease_pids(pids: List[int]) -> List[int]:
+    return [pid for pid in pids if pid_alive(int(pid))]
+
+
+def _write_leases(leases: Dict[str, List[int]]) -> None:
+    """Write the full lease map; caller must hold the registry lock
+    (mutations read-modify-write under the same flock, so no merge)."""
+    path = _leases_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    document = {"version": _REGISTRY_VERSION, "leases": leases}
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=".leases-", suffix=".json")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(document, handle, ensure_ascii=False, indent=2)
+        os.replace(tmp_name, path)
+    except OSError:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
+def lease_add(instance_id: str, pid: int) -> None:
+    """Record that ``pid`` is actively using ``instance_id``."""
+    with _FileLock(_lock_path()):
+        leases = _read_leases()
+        pids = _prune_lease_pids(leases.get(instance_id, []))
+        if pid not in pids:
+            pids.append(pid)
+        leases[instance_id] = pids
+        _write_leases(leases)
+
+
+def lease_remove(instance_id: str, pid: int) -> None:
+    with _FileLock(_lock_path()):
+        leases = _read_leases()
+        pids = [p for p in _prune_lease_pids(leases.get(instance_id, [])) if p != pid]
+        if pids:
+            leases[instance_id] = pids
+        else:
+            leases.pop(instance_id, None)
+        _write_leases(leases)
+
+
+def lease_holders(instance_id: str) -> List[int]:
+    """Live pids (excluding none) currently using the instance."""
+    return _prune_lease_pids(_read_leases().get(instance_id, []))
+
+
+# ============================================================================
 # Lookup helpers
 # ============================================================================
 
