@@ -446,7 +446,10 @@ def open_database(
             pass
 
     if entry:
-        result["instance"] = dict(entry)
+        # Refresh the entry: the registry record written at attach time
+        # still carries the loading-era (empty) paths.
+        refreshed = instances.find_by_id(str(entry.get("instance_id")))
+        result["instance"] = dict(refreshed or entry)
     return result
 
 
