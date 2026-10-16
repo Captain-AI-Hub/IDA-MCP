@@ -97,6 +97,10 @@ def main(argv: list[str] | None = None) -> int:
         headless=True,
         get_meta=read_meta,
         on_shutdown=on_shutdown,
+        # input_file is unknown until the database finishes loading; publish
+        # the target so a second open_database of the same file attaches to
+        # this loading worker instead of spawning a duplicate.
+        registry_extra={"target": target},
     )
 
     def collect_meta() -> dict:

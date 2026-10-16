@@ -411,8 +411,18 @@ def open_database(
         return {"error": f"File not found: {path}"}
     local_path = os.path.abspath(local_path)
 
-    # 1. Attach to a live instance that already has this file/database open.
+    # 1. Attach to a live instance that already has this file/database open
+    #    (or is still loading it — such entries carry only "target").
     existing = instances.find_by_path(local_path)
+    if existing is None:
+        existing = next(
+            (
+                entry
+                for entry in instances.list_live_instances()
+                if str(entry.get("target") or "") == local_path
+            ),
+            None,
+        )
     if existing is not None and bridge_client.is_alive(existing):
         result = {
             "status": "ok",
