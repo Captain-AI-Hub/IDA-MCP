@@ -349,6 +349,16 @@ class TestFindBytes:
                     assert isinstance(result["matches"], str)
                     assert result["total"] >= 1
 
+    def test_find_regex_nonempty_regression(self, tool_caller, first_function_name):
+        """find_regex must return text lines (regression: dict join crash)."""
+        result = tool_caller(
+            "find_regex", {"pattern": first_function_name[:8], "limit": 5}
+        )
+        assert "error" not in result
+        assert result["count"] >= 1
+        first = result["items"].splitlines()[0]
+        assert first.startswith("0x") and "  " in first
+
     def test_find_bytes_with_wildcard(self, tool_caller):
         """Test byte search with wildcard."""
         # Search for a common pattern

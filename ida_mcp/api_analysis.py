@@ -1141,7 +1141,7 @@ def find_regex(
     except re.error as e:
         return {"error": f"invalid regex: {e}", "pattern": pattern}
 
-    matches: List[dict] = []
+    matches: List[str] = []
     skipped = 0
     truncated = False
     for ea, name in idautils.Names():
@@ -1150,7 +1150,7 @@ def find_regex(
         if skipped < max(0, offset):
             skipped += 1
             continue
-        matches.append({"ea": hex_addr(int(ea)), "name": str(name)})
+        matches.append(f"{hex_addr(int(ea))}  {name}")
         if len(matches) >= max(1, limit):
             truncated = True
             break
