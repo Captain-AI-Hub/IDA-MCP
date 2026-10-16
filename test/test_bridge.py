@@ -98,6 +98,21 @@ def test_unknown_route_is_404(server):
     assert excinfo.value.code == 404
 
 
+def test_loading_gate(server):
+    """Tool calls fail fast while the database is loading."""
+    srv, port = server
+    srv.state.loading = True
+    srv.state.ready_event.clear()
+    try:
+        with pytest.raises(urllib.error.HTTPError) as excinfo:
+            _request(port, "POST", "/rpc", {"tool": "echo", "params": {}})
+        assert excinfo.value.code == 500
+        assert "loading" in excinfo.value.read().decode()
+    finally:
+        srv.state.loading = False
+        srv.state.ready_event.set()
+
+
 def test_main_queue_executes_on_draining_thread(server):
     """Queued calls execute when the main (draining) thread processes them."""
     srv, _port = server

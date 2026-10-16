@@ -67,11 +67,22 @@ class BridgeState:
         self._docs_lock = threading.Lock()
         # idalib workers execute queued SDK calls on the process main thread.
         self.main_queue: "queue.Queue[tuple[Callable[[], Any], Future]]" = queue.Queue()
+        # Workers open huge databases after the bridge is already serving:
+        # gate tool calls until the database is ready. wait_for_analysis
+        # blocks on ready_event instead of failing fast.
+        self.loading = False
+        self.ready_event = threading.Event()
+        self.ready_event.set()
 
     # -- dispatch ----------------------------------------------------------
 
     def call_tool(self, name: str, params: Dict[str, Any], timeout: Optional[float]) -> Any:
-        """Run one registered tool."""
+        """Run one registered tool (gated while the database is loading)."""
+        if self.loading and name != "wait_for_analysis":
+            raise RuntimeError("database is still loading")
+        if self.loading and name == "wait_for_analysis":
+            if not self.ready_event.wait(timeout=timeout if timeout else None):
+                raise TimeoutError("database still loading after tool timeout")
         ensure_api_modules_loaded()
         tools = rpc.get_tools()
         fn = tools.get(name)

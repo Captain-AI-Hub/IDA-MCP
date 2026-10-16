@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.9.5"
+__version__ = "0.9.6"
 
 from .rpc import tool, get_tools
 from .sync import idaread, idawrite

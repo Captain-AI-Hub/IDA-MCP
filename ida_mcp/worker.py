@@ -2,14 +2,18 @@
 
 Each headless database runs in its own OS process::
 
-    python -m ida_mcp.worker <executable-or-i64> [--port N] [--host H]
+    python -m ida_mcp.worker <executable-or-i64> [--port N]
 
-The worker opens the database with the official ``idapro`` idalib bindings
-(``idapro.open_database(..., run_auto_analysis=True)`` — creating and
-analyzing the .i64 when given a raw binary), then serves the same JSON-RPC
-bridge as the GUI plugin and publishes itself in the shared instance
-registry. Shutdown (``POST /shutdown`` or SIGTERM) saves the database and
-exits.
+Startup order matters for huge databases: the bridge binds and registers
+the instance FIRST (healthz answers immediately; tool calls fail fast
+with "database is still loading"), then ``idapro.open_database`` runs on
+the main thread (``run_auto_analysis=True`` creates and analyzes the
+.i64 for raw binaries). Nothing needs the main-thread call queue while
+loading — tools are gated and ``wait_for_analysis`` blocks on the ready
+event — so callers can attach in seconds and poll instead of waiting out
+the whole analysis inside one tool call. Once the database is ready the
+gate opens and the registry entry is refreshed with the real paths.
+Shutdown (``POST /shutdown`` or SIGTERM) saves the database and exits.
 """
 
 from __future__ import annotations
@@ -46,6 +50,7 @@ def main(argv: list[str] | None = None) -> int:
     # any other ida_* module is imported (per the idalib documentation).
     import idapro  # noqa: E402  (first IDA import; activates idalib)
 
+    from . import bridge_server
     from .config import load_config
 
     target = os.path.abspath(args.target)
@@ -54,35 +59,32 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     load_config()
-    _log(f"opening database (auto-analysis): {target}")
-    # run_auto_analysis=True creates the .i64 for raw binaries and analyzes
-    # existing databases before any tool call runs.
-    code = idapro.open_database(target, run_auto_analysis=True)
-    if code != 0:
-        _log(f"idapro.open_database failed with code {code}")
-        return 3
 
-    from . import bridge_server
-    from .api_loader import ensure_api_modules_loaded
-    from .sync import wait_for_auto_analysis
-
-    ensure_api_modules_loaded()
-    wait_for_auto_analysis()
-
-    import ida_loader  # noqa: E402
-    import ida_nalt   # noqa: E402
-    import idaapi     # noqa: E402
+    db_ready = threading.Event()
+    meta_cache: dict = {"target": target}
 
     def read_meta() -> dict:
-        # IDALIB mode: direct calls are safe on the main thread.
-        try:
-            return {
-                "input_file": ida_nalt.get_input_file_path() or "",
-                "database_path": ida_loader.get_path(ida_loader.PATH_TYPE_IDB) or "",
-                "ida_version": idaapi.get_kernel_version() or "",
-            }
-        except Exception:  # noqa: BLE001 - meta is best effort
-            return {}
+        # Before the database opens only the cached target is reportable;
+        # afterwards the SDK calls run on the main thread.
+        meta = dict(meta_cache)
+        if db_ready.is_set():
+            try:
+                import ida_loader  # noqa: E402
+                import ida_nalt   # noqa: E402
+                import idaapi     # noqa: E402
+
+                meta.update(
+                    {
+                        "input_file": ida_nalt.get_input_file_path() or "",
+                        "database_path": ida_loader.get_path(ida_loader.PATH_TYPE_IDB) or "",
+                        "ida_version": idaapi.get_kernel_version() or "",
+                    }
+                )
+            except Exception:  # noqa: BLE001 - meta is best effort
+                pass
+        else:
+            meta["loading"] = True
+        return meta
 
     stop_event = threading.Event()
 
@@ -98,18 +100,48 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     def collect_meta() -> dict:
-        # HTTP handler threads must hop onto the main thread under idalib.
-        if threading.current_thread() is threading.main_thread():
-            return read_meta()
-        return server.state.run_on_main(read_meta).result()
+        # Once loaded, HTTP handler threads must hop onto the main thread
+        # under idalib; while loading, read_meta only touches the cache.
+        if db_ready.is_set() and threading.current_thread() is not threading.main_thread():
+            return server.state.run_on_main(read_meta).result()
+        return read_meta()
 
     server.state.get_meta = collect_meta
+
+    # 1) Bind + register first so open_database callers can attach within
+    #    seconds even when loading a multi-GB database takes minutes.
+    server.state.loading = True
+    server.state.ready_event.clear()
     try:
         port = server.start()
     except OSError as exc:
-        _log(f"failed to bind bridge on {args.host}:{args.port}: {exc}")
+        _log(f"failed to bind bridge on {bridge_server.BRIDGE_HOST}:{args.port}: {exc}")
         return 4
     _log(f"bridge listening on {bridge_server.BRIDGE_HOST}:{port} (instance {server.instance_id})")
+
+    # 2) Open the database on the main thread (idalib requires it). The
+    #    loading gate keeps tool calls away while we are blocked here;
+    #    wait_for_analysis sleepers block on ready_event.
+    _log(f"opening database (auto-analysis): {target}")
+    code = idapro.open_database(target, run_auto_analysis=True)
+    if code != 0:
+        _log(f"idapro.open_database failed with code {code}")
+        # Wake sleepers so their HTTP calls fail with a real timeout
+        # instead of hanging forever.
+        server.state.ready_event.set()
+        server.stop()
+        return 3
+
+    from .api_loader import ensure_api_modules_loaded
+    from .sync import wait_for_auto_analysis
+
+    ensure_api_modules_loaded()
+    wait_for_auto_analysis()
+    db_ready.set()
+    server.state.loading = False
+    server.state.ready_event.set()
+    server._publish()  # refresh the registry entry with real paths
+    _log("database ready")
 
     def _signal_handler(signum, _frame):  # type: ignore[no-untyped-def]
         _log(f"signal {signum} received; shutting down")

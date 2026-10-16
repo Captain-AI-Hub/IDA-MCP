@@ -94,8 +94,13 @@ def call_tool(
     timeout: Optional[float] = None,
 ) -> Any:
     payload = {"tool": tool, "params": params or {}}
-    if timeout is not None:
-        payload["timeout"] = float(timeout)
+    if timeout is None:
+        # Tool calls default to the configured request timeout, not the
+        # 2-second liveness probe.
+        from .config import get_request_timeout
+
+        timeout = float(get_request_timeout())
+    payload["timeout"] = float(timeout)
     document = _request(entry, "POST", "/rpc", payload=payload, timeout=timeout)
     return check_error(document).get("result")
 
