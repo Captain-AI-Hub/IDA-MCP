@@ -35,7 +35,7 @@ _ATTACH_POLL_INTERVAL = 0.5
 _PORT_SCAN_LIMIT = 256
 
 _MANAGED_LOCK = threading.Lock()
-_MANAGED: Dict[int, Dict[str, Any]] = {}  # pid -> {"instance_id": ..., "spawned_at": ...}
+_MANAGED: Dict[str, Dict[str, Any]] = {}  # instance_id -> {"instance_id": ..., "spawned_at": ...}
 
 
 # ============================================================================
@@ -237,12 +237,22 @@ def _wait_for_instance(
     pid: Optional[int],
     match_path: Optional[str],
     timeout: float,
+    port: Optional[int] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Poll the registry until the spawned instance registers and answers."""
+    """Poll the registry until the spawned instance registers and answers.
+
+    The registering pid is not always the launched pid: on Windows a venv
+    ``Scripts\\python.exe`` is a redirector whose child (the real
+    interpreter) self-registers, so pid matching never succeeds there.
+    Match by the reserved bridge port first — headless workers bind exactly
+    the port passed via ``IDA_MCP_PORT`` — and accept a pid match otherwise.
+    """
     deadline = time.monotonic() + max(float(timeout), 5.0)
     while time.monotonic() < deadline:
         for entry in instances.read_instances():
-            if pid is not None and entry.get("pid") != pid:
+            pid_match = pid is not None and entry.get("pid") == pid
+            port_match = port is not None and entry.get("port") == port
+            if not pid_match and not port_match:
                 continue
             if match_path is not None:
                 found = instances.find_by_path(match_path)
@@ -252,6 +262,31 @@ def _wait_for_instance(
                 return entry
         time.sleep(_ATTACH_POLL_INTERVAL)
     return None
+
+
+def _terminate_process_tree(proc: subprocess.Popen) -> None:
+    """Terminate a spawned worker and everything it spawned.
+
+    Needed on Windows where a venv redirector python makes the real worker
+    a grandchild: TerminateProcess on the redirector would orphan it.
+    """
+    if proc.poll() is not None:
+        return
+    try:
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+        else:
+            proc.terminate()
+    except (OSError, subprocess.SubprocessError):
+        try:
+            proc.terminate()
+        except OSError:
+            pass
 
 
 def launch_headless(target_path: str, *, timeout: float = OPEN_TIMEOUT_SECONDS) -> Dict[str, Any]:
@@ -313,13 +348,14 @@ def launch_headless(target_path: str, *, timeout: float = OPEN_TIMEOUT_SECONDS) 
         except Exception:  # noqa: BLE001 - child keeps its own fd
             pass
 
-    entry = _wait_for_instance(proc.pid, None, timeout)
+    entry = _wait_for_instance(proc.pid, None, timeout, port=port)
     if entry is None:
-        proc.terminate()
+        _terminate_process_tree(proc)
         return {"error": "idalib worker did not become available in time", "pid": proc.pid}
+    instance_id = str(entry.get("instance_id"))
     with _MANAGED_LOCK:
-        _MANAGED[proc.pid] = {
-            "instance_id": entry.get("instance_id"),
+        _MANAGED[instance_id] = {
+            "instance_id": instance_id,
             "headless": True,
             "spawned_at": time.time(),
             "process": proc,
@@ -373,7 +409,7 @@ def launch_gui(
     except OSError as exc:
         return {"error": f"Failed to launch IDA: {exc}"}
 
-    entry = _wait_for_instance(proc.pid, None, OPEN_TIMEOUT_SECONDS)
+    entry = _wait_for_instance(proc.pid, None, OPEN_TIMEOUT_SECONDS, port=port)
     if entry is None:
         return {
             "status": "launched",
@@ -381,9 +417,10 @@ def launch_gui(
             "it may still appear via list_databases().",
             "pid": proc.pid,
         }
+    instance_id = str(entry.get("instance_id"))
     with _MANAGED_LOCK:
-        _MANAGED[proc.pid] = {
-            "instance_id": entry.get("instance_id"),
+        _MANAGED[instance_id] = {
+            "instance_id": instance_id,
             "headless": False,
             "spawned_at": time.time(),
             "process": proc,
@@ -480,9 +517,9 @@ def close_database(
     GUI instances stay open unless terminate=true.
     """
     instance_id = instance_entry.get("instance_id")
-    pid = instance_entry.get("pid")
+    managed_key = str(instance_id) if instance_id is not None else None
     with _MANAGED_LOCK:
-        managed = _MANAGED.get(pid)
+        managed = _MANAGED.get(managed_key) if managed_key else None
     headless = bool(instance_entry.get("headless"))
 
     # Release our lease first; only the last active user (or terminate=true)
@@ -515,10 +552,7 @@ def close_database(
     except Exception as exc:  # noqa: BLE001 - force-kill below when possible
         process = (managed or {}).get("process")
         if process is not None:
-            try:
-                process.terminate()
-            except OSError:
-                pass
+            _terminate_process_tree(process)
         return {"status": "error", "error": f"shutdown request failed: {exc}"}
 
     process = (managed or {}).get("process")
@@ -526,12 +560,10 @@ def close_database(
         try:
             process.wait(timeout=15)
         except (subprocess.TimeoutExpired, OSError):
-            try:
-                process.kill()
-            except OSError:
-                pass
+            _terminate_process_tree(process)
     with _MANAGED_LOCK:
-        _MANAGED.pop(pid, None)
+        if managed_key:
+            _MANAGED.pop(managed_key, None)
     instances.remove_instance(str(instance_id))
     return {"status": "closed", "instance_id": instance_id, "saved": save}
 
@@ -540,7 +572,7 @@ def shutdown_managed() -> None:
     """Terminate every worker this process spawned (server shutdown path)."""
     with _MANAGED_LOCK:
         managed = list(_MANAGED.items())
-    for pid, info in managed:
+    for managed_key, info in managed:
         process = info.get("process")
         try:
             if process is not None and process.poll() is None:
@@ -548,8 +580,8 @@ def shutdown_managed() -> None:
                 try:
                     process.wait(timeout=10)
                 except subprocess.TimeoutExpired:
-                    process.kill()
+                    _terminate_process_tree(process)
         except OSError:
             pass
         with _MANAGED_LOCK:
-            _MANAGED.pop(pid, None)
+            _MANAGED.pop(managed_key, None)
