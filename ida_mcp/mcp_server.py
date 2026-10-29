@@ -119,7 +119,9 @@ def _routing_error(instance_id: Optional[str]) -> Dict[str, Any]:
     return error_payload(
         "instance_ambiguous",
         "Multiple IDA instances are live; retry THIS call with instance_id "
-        "(from open_database's result or list_databases()):\n" + listing,
+        "(from open_database's result or list_databases()). Ambiguity is "
+        "resolved by the parameter alone — instances stay as they are:\n"
+        + listing,
     )
 
 
@@ -285,7 +287,9 @@ def build_server() -> "Any":
             "（无头 idalib worker 会自动创建并分析 .i64）。instance_id 路由规则："
             "多个实例同时打开时，每次工具调用都必须传 instance_id（来自 "
             "open_database 的返回值或 list_databases()）；省略报 "
-            "instance_ambiguous 错误时，重试同一调用并补上 instance_id 即可。"
+            "instance_ambiguous 错误时，重试同一调用并补上 instance_id 即可，"
+            "路由歧义不影响实例本身，实例保持原状。多数据库并行分析是常态："
+            "关闭实例仅用于其分析任务确实完成或不再需要的场合。"
             "只有一个实例时可省略 instance_id。"
             "ida_python_reference(query) 查询官方 IDAPython API 文档。"
         ),
@@ -416,7 +420,7 @@ def _register_management_tools(server: "Any") -> None:
         return lifecycle.close_database(entry, terminate=terminate, save=save)
 
     server.tool(
-        description="Release an IDA database worker: saved and shut down when the last user detaches; terminate=true forces shutdown. Only close a database when its analysis is finished."
+        description="Release an IDA database worker: saved and shut down when the last user detaches; terminate=true forces shutdown. Use when its analysis is finished or no longer needed — the other instances are unaffected."
     )(text_result_tool(close_database))
 
     def ida_python_reference(
