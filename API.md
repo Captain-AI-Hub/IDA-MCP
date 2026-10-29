@@ -1,6 +1,6 @@
 # IDA-MCP API Reference
 
-本文档覆盖当前架构（v0.10，stdio 单传输 + 实例桥 + 纯 idalib 无头 worker）的对外契约：
+本文档覆盖当前架构（v1.0，stdio 单传输 + 实例桥 + 纯 idalib 无头 worker）的对外契约：
 
 1. MCP 服务器（stdio）工具面
 2. 实例桥 JSON-RPC 协议（内部，回环）
