@@ -133,15 +133,35 @@ class BridgeState:
             return future.result()
         return future.result(timeout=max(float(timeout), 0.1))
 
-    def _dispatch(self, fn: Callable, params: Dict[str, Any]) -> Any:
+    def _dispatch(self, fn: Callable, params: Dict[str, Any], operation_id: Optional[str] = None) -> Any:
         if os.environ.get("IDA_MCP_IDALIB"):
             # idalib requires SDK calls on the process main thread; the
-            # worker's main loop drains this queue.
+            # worker's main loop drains this queue. The queued closure
+            # re-registers the *executing* (main) thread once the code is
+            # actually about to run there — rebinding before enqueue would
+            # race a cancel arriving between enqueue and execution and
+            # target a thread that never runs the code.
             if threading.current_thread() is threading.main_thread():
                 return fn(**params)
-            return self.run_on_main(lambda: fn(**params)).result()
+
+            def run_on_worker_main() -> Any:
+                self._rebind_active_thread(operation_id)
+                return fn(**params)
+
+            return self.run_on_main(run_on_worker_main).result()
         # Outside a worker (tests, tooling) run inline.
         return fn(**params)
+
+    def _rebind_active_thread(self, operation_id: Optional[str]) -> None:
+        """Point the operation's cancellation target at the main thread."""
+        if operation_id is None:
+            return
+        try:
+            with self._active_lock:
+                if operation_id in self._active:
+                    self._active[operation_id] = threading.main_thread().ident
+        except Exception:  # noqa: BLE001 - rebinding is best effort
+            pass
 
     def _dispatch_tracked(
         self, fn: Callable, params: Dict[str, Any], operation_id: str
@@ -150,17 +170,15 @@ class BridgeState:
 
         While the tool runs, /cancel_operation can (a) flag IDA's native
         analysis-interrupt switch so stuck SDK calls unwind, and (b) inject
-        ``_OperationInterrupt`` into this thread so pure-Python loops stop.
-        The interrupt is translated here into a plain TimeoutError so it
-        crosses the concurrent.futures and HTTP boundaries as a normal,
-        serializable error.
+        ``_OperationInterrupt`` into the thread executing the code so
+        pure-Python loops stop. The interrupt is translated here into a
+        plain TimeoutError so it crosses the concurrent.futures and HTTP
+        boundaries as a normal, serializable error.
         """
         with self._active_lock:
             self._active[operation_id] = threading.get_ident()
-            self._generation += 1
-            generation = self._generation
         try:
-            return self._dispatch(fn, params)
+            return self._dispatch(fn, params, operation_id=operation_id)
         except _OperationInterrupt:
             raise TimeoutError(
                 f"operation {operation_id} was cancelled before completion"
@@ -168,7 +186,6 @@ class BridgeState:
         finally:
             with self._active_lock:
                 self._active.pop(operation_id, None)
-                self._generation += 1
 
     def cancel_operation(self, operation_id: str) -> bool:
         """Interrupt one in-flight operation. True when it was active."""

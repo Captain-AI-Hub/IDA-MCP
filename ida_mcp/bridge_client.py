@@ -163,8 +163,16 @@ def describe_error(exc: Exception) -> Dict[str, Any]:
             f"bridge HTTP {exc.code}: {exc.reason}" + (f" — {detail}" if detail else ""),
         )
     if isinstance(exc, urllib.error.URLError):
+        # A client-side read timeout surfaces as URLError wrapping TimeoutError.
+        if isinstance(getattr(exc, "reason", None), TimeoutError):
+            return error_payload(
+                "timeout",
+                "Tool call timed out on the client side.",
+            )
         return error_payload(
             "instance_unreachable",
             f"IDA instance not reachable: {exc.reason}",
         )
+    if isinstance(exc, TimeoutError):
+        return error_payload("timeout", "Tool call timed out on the client side.")
     return error_payload("bridge_error", f"{type(exc).__name__}: {exc}")

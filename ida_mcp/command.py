@@ -20,8 +20,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
 import sys
+import time
 from typing import Any, Optional, Sequence
 
 _repo_root = str(pathlib.Path(__file__).resolve().parents[1])
@@ -159,9 +161,34 @@ def _cmd_tool_call(args: argparse.Namespace) -> int:
         return EXIT_USAGE
 
     try:
-        result = bridge_client.call_tool(entry, args.tool_name, params, timeout=args.timeout)
+        # A timeout also asks the bridge to interrupt the still-running code
+        # (same semantics as the MCP server's forward()); without this a
+        # hung py_eval would pin the worker thread forever.
+        operation_id = (
+            f"cli-{args.tool_name}-{os.getpid()}-{time.monotonic_ns()}"
+            if args.timeout is not None
+            else None
+        )
+        result = bridge_client.call_tool(
+            entry, args.tool_name, params, timeout=args.timeout, operation_id=operation_id
+        )
     except Exception as exc:  # noqa: BLE001 - CLI boundary
-        _dump_json(bridge_client.describe_error(exc))
+        described = bridge_client.describe_error(exc)
+        if (
+            operation_id is not None
+            and described.get("error", {}).get("code") == "timeout"
+        ):
+            try:
+                if bridge_client.cancel_operation(entry, operation_id):
+                    described = bridge_client.describe_error(
+                        TimeoutError(
+                            f"{args.tool_name} exceeded its {args.timeout}s timeout; "
+                            "the in-flight execution was interrupted on the instance."
+                        )
+                    )
+            except Exception:  # noqa: BLE001 - cancellation is best effort
+                pass
+        _dump_json(described)
         return EXIT_ERROR
     _dump_json(result)
     return EXIT_OK
