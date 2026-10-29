@@ -38,7 +38,7 @@ from .errors import error_payload
 from .idapython_docs import DocsIndex, format_entries
 from .rpc import ToolSpec, get_tool_specs, text_result_tool
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 # Backend tools replaced by standalone management tools.
 _MANAGED_TOOL_NAMES = {"check_connection", "list_instances"}
