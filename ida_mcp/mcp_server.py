@@ -49,8 +49,9 @@ _DOCS_INDEX: Optional[DocsIndex] = None
 _DOCS_INSTANCE_ID: Optional[str] = None
 
 _INSTANCE_ID_HELP = (
-    "Target instance id (from open_database's result or list_databases()); "
-    "defaults to the sole live instance, required when several are live"
+    "REQUIRED whenever more than one database is open (from open_database's "
+    "result or list_databases()); optional only while exactly one instance "
+    "is live. Never resolve ambiguity by closing instances."
 )
 
 
@@ -117,8 +118,11 @@ def _routing_error(instance_id: Optional[str]) -> Dict[str, Any]:
     )
     return error_payload(
         "instance_ambiguous",
-        "Multiple IDA instances are live; pass instance_id on this call "
-        "(from open_database's result or list_databases()):\n" + listing,
+        "Multiple IDA instances are live; retry THIS call with instance_id "
+        "(from open_database's result or list_databases()):\n" + listing
+        + "\nDo NOT close other instances to resolve this — they may belong "
+        "to other agents or tasks and closing destroys their work. Just "
+        "retry the same tool with the instance_id parameter.",
     )
 
 
@@ -281,9 +285,12 @@ def build_server() -> "Any":
         version=__version__,
         instructions=(
             "IDA Pro 逆向分析 MCP。先 open_database(path) 打开/附加数据库"
-            "（无头 idalib worker 会自动创建并分析 .i64）。多个实例同时打开时，"
-            "每次工具调用都要传 instance_id（来自 open_database 的返回值或 "
-            "list_databases()）；只有一个实例时可省略。"
+            "（无头 idalib worker 会自动创建并分析 .i64）。instance_id 路由规则："
+            "多个实例同时打开时，每次工具调用都必须传 instance_id（来自 "
+            "open_database 的返回值或 list_databases()）；省略报 "
+            "instance_ambiguous 错误时，重试同一调用并补上 instance_id 即可——"
+            "绝不要用 close_database 关闭其他实例来消除歧义，那些实例可能属于"
+            "其他 agent/任务。只有一个实例时可省略 instance_id。"
             "ida_python_reference(query) 查询官方 IDAPython API 文档。"
         ),
     )
@@ -340,7 +347,7 @@ def _register_management_tools(server: "Any") -> None:
         return result
 
     server.tool(
-        description="List all live IDA databases/instances ({instance_id, pid, headless, input_file}); pass one as instance_id on tool calls."
+        description="List all live IDA databases/instances ({instance_id, pid, headless, input_file}); pass one as instance_id on every tool call while several are live — never close instances to reduce ambiguity."
     )(text_result_tool(list_databases))
 
     def open_database(
@@ -370,7 +377,7 @@ def _register_management_tools(server: "Any") -> None:
         )
 
     server.tool(
-        description="Open a binary or .i64 database in a headless idalib worker (creates/analyzes the .i64). Call this first."
+        description="Open a binary or .i64 database in a headless idalib worker (creates/analyzes the .i64). Call this first. Record the returned instance.instance_id — every subsequent tool call must carry it while multiple databases are open."
     )(text_result_tool(open_database))
 
     def save_database(
@@ -413,7 +420,7 @@ def _register_management_tools(server: "Any") -> None:
         return lifecycle.close_database(entry, terminate=terminate, save=save)
 
     server.tool(
-        description="Release an IDA database worker: saved and shut down when the last user detaches; terminate=true forces shutdown."
+        description="Release an IDA database worker: saved and shut down when the last user detaches; terminate=true forces shutdown. NEVER call this to reduce instance ambiguity or 'clean up' — only close a database when its analysis is done; other live instances may belong to other agents."
     )(text_result_tool(close_database))
 
     def ida_python_reference(
