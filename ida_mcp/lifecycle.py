@@ -2,12 +2,11 @@
 
 Implements multi-database lifecycle management on top of the local bridge:
 
-- ``open_database(path)``: attach to a GUI instance that already has the
-  file open, or spawn a headless idalib worker (creating and analyzing the
-  .i64 for raw binaries) — or explicitly launch a GUI instance.
+- ``open_database(path)``: attach to a live worker that already has the file
+  open (or is still loading it), or spawn a headless idalib worker (creating
+  and analyzing the .i64 for raw binaries).
 - ``list_databases()`` / ``save_database()`` / ``close_database()``:
   multi-instance bookkeeping through the shared JSON registry.
-
 """
 
 from __future__ import annotations
@@ -25,7 +24,6 @@ from typing import Any, Dict, List, Optional, Tuple
 from . import bridge_client, instances
 from .bridge_server import BRIDGE_PORT_BASE
 from .config import (
-    get_ida_path,
     get_ida_python,
     get_request_timeout,
 )
@@ -368,80 +366,16 @@ def launch_headless(target_path: str, *, timeout: float = OPEN_TIMEOUT_SECONDS) 
     }
 
 
-def launch_gui(
-    file_path: str,
-    *,
-    extra_args: Optional[List[str]] = None,
-) -> Dict[str, Any]:
-    """Launch an IDA GUI process with the plugin auto-starting the bridge."""
-    target_ida = get_ida_path()
-    if not target_ida:
-        return {"error": "IDA path not configured. Set 'ida_path' in config.conf."}
-    local_target_ida = target_ida
-    if not local_target_ida or not os.path.exists(local_target_ida):
-        return {"error": f"IDA executable not found at: {target_ida}"}
-
-    local_file_path = file_path
-    if not local_file_path or not os.path.exists(local_file_path):
-        return {"error": f"File not found: {file_path}"}
-
-    port = reserve_instance_port()
-    final_file_path, _input, _db = _resolve_launch_inputs(local_file_path)
-
-    cmd = [local_target_ida]
-    launch_args = [
-        arg.strip()
-        for arg in (extra_args or [])
-        if isinstance(arg, str) and arg.strip() and arg.strip() != "-A"
-    ]
-    # Programmatic GUI launches are always autonomous (no dialogs).
-    launch_args.insert(0, "-A")
-    cmd.extend(launch_args)
-    cmd.append(final_file_path)
-
-    env = os.environ.copy()
-    env["IDA_MCP_PORT"] = str(port)
-    cwd = os.path.dirname(local_target_ida) or None
-    try:
-        proc = subprocess.Popen(
-            cmd, cwd=cwd, env=env, close_fds=(sys.platform != "win32")
-        )
-    except OSError as exc:
-        return {"error": f"Failed to launch IDA: {exc}"}
-
-    entry = _wait_for_instance(proc.pid, None, OPEN_TIMEOUT_SECONDS, port=port)
-    if entry is None:
-        return {
-            "status": "launched",
-            "message": "IDA launched but the instance did not register in time; "
-            "it may still appear via list_databases().",
-            "pid": proc.pid,
-        }
-    instance_id = str(entry.get("instance_id"))
-    with _MANAGED_LOCK:
-        _MANAGED[instance_id] = {
-            "instance_id": instance_id,
-            "headless": False,
-            "spawned_at": time.time(),
-            "process": proc,
-        }
-    return {"status": "ok", "mode": "gui", "instance": entry}
-
-
 def open_database(
     path: str,
     *,
-    set_current: bool = True,
-    headless: str = "auto",
     wait_for_analysis: bool = True,
     timeout: float = OPEN_TIMEOUT_SECONDS,
-    extra_args: Optional[List[str]] = None,
-    select_callback=None,
 ) -> Dict[str, Any]:
-    """Attach to a live instance for ``path`` or launch a new one.
+    """Attach to a live worker for ``path`` or spawn a new idalib worker.
 
-    headless: "auto" (attach → headless worker), "true"/"headless" (force
-    idalib worker), "false"/"gui" (launch the IDA GUI).
+    Returns the instance record; callers route per call via instance_id
+    (there is no server-side default selection).
     """
     local_path = str(path).strip()
     if not local_path or not os.path.exists(local_path):
@@ -467,19 +401,12 @@ def open_database(
             "instance": existing,
         }
     else:
-        mode = headless.strip().lower()
-        want_gui = mode in {"false", "no", "gui", "graphical"}
-        if want_gui:
-            result = launch_gui(local_path, extra_args=extra_args)
-        else:
-            launch_target, _input, _db = _resolve_launch_inputs(local_path)
-            result = launch_headless(launch_target, timeout=timeout)
+        launch_target, _input, _db = _resolve_launch_inputs(local_path)
+        result = launch_headless(launch_target, timeout=timeout)
         if "error" in result:
             return result
 
     entry = result.get("instance")
-    if entry and set_current and select_callback:
-        select_callback(entry.get("instance_id"))
 
     if entry and wait_for_analysis:
         try:
@@ -512,9 +439,9 @@ def close_database(
     terminate: bool = False,
     save: bool = True,
 ) -> Dict[str, Any]:
-    """Detach from an instance; terminate managed/headless ones by default.
+    """Release an idalib worker; the last active user shuts it down.
 
-    GUI instances stay open unless terminate=true.
+    ``terminate=true`` forces shutdown even while other users hold leases.
     """
     instance_id = instance_entry.get("instance_id")
     managed_key = str(instance_id) if instance_id is not None else None
@@ -535,9 +462,7 @@ def close_database(
         except Exception:  # noqa: BLE001
             holders = []
 
-    should_terminate = terminate or bool((managed or {}).get("headless")) or (
-        headless and not holders
-    )
+    should_terminate = terminate or bool((managed or {}).get("headless")) or not holders
     if not should_terminate:
         return {
             "status": "released",

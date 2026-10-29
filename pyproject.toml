@@ -1,7 +1,7 @@
 [project]
 name = "idamcp-hub"
-version = "0.9.8"
-description = "IDA Pro MCP server: stdio by default (http optional), headless idalib workers, and official IDAPython reference."
+version = "0.10.0"
+description = "IDA Pro MCP server: stdio transport, headless idalib workers, and official IDAPython reference."
 readme = "README.md"
 license = "GPL-3.0-only"
 requires-python = ">=3.11"
@@ -27,16 +27,12 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-# ida_mcp.py is the IDA plugin entry file; ship it so installers can copy it.
-only-include = ["ida_mcp", "ida_mcp.py"]
+only-include = ["ida_mcp"]
 
 [tool.hatch.build.targets.sdist]
 include = [
     "ida_mcp",
-    "ida_mcp.py",
-    "ida-plugin.json",
-    "install.py",
-    "requirements.txt",
+    "scripts",
     "README.md",
     "API.md",
 ]

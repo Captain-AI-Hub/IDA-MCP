@@ -92,8 +92,11 @@ def call_tool(
     tool: str,
     params: Optional[Dict[str, Any]] = None,
     timeout: Optional[float] = None,
+    operation_id: Optional[str] = None,
 ) -> Any:
     payload = {"tool": tool, "params": params or {}}
+    if operation_id:
+        payload["operation_id"] = str(operation_id)
     if timeout is None:
         # Tool calls default to the configured request timeout, not the
         # 2-second liveness probe.
@@ -103,6 +106,22 @@ def call_tool(
     payload["timeout"] = float(timeout)
     document = _request(entry, "POST", "/rpc", payload=payload, timeout=timeout)
     return check_error(document).get("result")
+
+
+def cancel_operation(
+    entry: Dict[str, Any],
+    operation_id: str,
+    timeout: float = 5.0,
+) -> bool:
+    """Interrupt one in-flight bridge operation. True when it was active."""
+    document = _request(
+        entry,
+        "POST",
+        "/cancel_operation",
+        payload={"operation_id": str(operation_id)},
+        timeout=timeout,
+    )
+    return bool(check_error(document).get("result", {}).get("cancelled"))
 
 
 def docs_modules(entry: Dict[str, Any], timeout: float = 30.0) -> list:

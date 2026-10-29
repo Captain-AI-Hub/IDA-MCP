@@ -15,8 +15,8 @@ MCP server (standalone process):
     - stdio is the only transport; no HTTP settings remain
 
 IDA / headless launch:
-    - ida_path: IDA executable (GUI launches)
-    - ida_python: IDA's Python runtime; also drives headless idalib workers
+    - ida_python: interpreter that can ``import idapro``; drives headless
+      idalib workers (normally IDA's own bundled runtime)
 
 General:
     - request_timeout: request timeout in seconds (default 30)
@@ -39,8 +39,7 @@ _TRANSPORTS = ("stdio", "http")
 # default configuration
 _DEFAULT_CONFIG = {
     # IDA / headless launch
-    "ida_path": None,  # IDA executable path
-    "ida_python": None,  # IDA Python executable path
+    "ida_python": None,  # Python executable that runs idalib workers
     # general
     "request_timeout": 30,
     "debug": False,
@@ -49,7 +48,6 @@ _DEFAULT_CONFIG = {
 # HCLI-managed settings. HCLI stores these in ida-config.json and the
 # ida-settings package exposes them while the plugin is running inside IDA.
 _HCLI_SETTING_KEYS = (
-    "ida_path",
     "ida_python",
     "request_timeout",
     "debug",
@@ -385,18 +383,6 @@ def persist_user_setting(key: str, value: str) -> bool:
 # ============================================================================
 # IDA / headless launch config accessors
 # ============================================================================
-
-
-def get_ida_path() -> str | None:
-    """Get the IDA executable path."""
-    config = load_config()
-    path = config.get("ida_path")
-
-    if isinstance(path, str):
-        path = path.strip()
-        if path:
-            return path
-    return None
 
 
 def get_ida_python() -> str | None:

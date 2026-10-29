@@ -42,8 +42,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    # Must be set before ida_mcp imports so sync.py dispatches directly
-    # instead of marshalling onto an IDA GUI main thread.
+    # Marks this process for bridge_server: SDK calls arriving on handler
+    # threads are queued onto the main thread (idalib requirement).
     os.environ["IDA_MCP_IDALIB"] = "1"
 
     # idapro must be the first IDA import; the database must be open before

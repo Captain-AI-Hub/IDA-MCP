@@ -6,13 +6,16 @@ Process model:
                  │
                  ├─ JSON registry discovery (<state>/instances.json)
                  └─ direct JSON-RPC bridge calls into the selected IDA
-                    process (GUI plugin instance or headless idalib worker)
+                    process (a headless idalib worker)
 
-All backend tools from the ``api_*`` catalog are forwarded to the currently
-selected instance; lifecycle tools manage multiple instances
-(open_database / list_databases / save_database / close_database), and
-``ida_python_reference`` searches the official IDAPython documentation of the
-attached IDA runtime.
+All backend tools from the ``api_*`` catalog are forwarded per call: an
+explicit ``instance_id`` argument always wins; when omitted, the sole live
+instance is the implicit target (there is no mutable default selection, so
+concurrent agents can never re-route each other's calls; with several live
+instances an omitted id is a loud error listing them). Lifecycle tools manage
+multiple instances (open_database / list_databases / save_database /
+close_database), and ``ida_python_reference`` searches the official IDAPython
+documentation of the attached IDA runtime.
 
 fastmcp is imported lazily so instance CLI commands stay fast and never pay
 the MCP stack import cost.
@@ -25,6 +28,7 @@ import inspect
 import json
 import os
 import threading
+import time
 from typing import Annotated, Any, Dict, List, Optional, get_args, get_origin, get_type_hints
 
 from . import bridge_client, instances, lifecycle
@@ -34,16 +38,20 @@ from .errors import error_payload
 from .idapython_docs import DocsIndex, format_entries
 from .rpc import ToolSpec, get_tool_specs, text_result_tool
 
-__version__ = "0.9.8"
+__version__ = "0.10.0"
 
 # Backend tools replaced by standalone management tools.
-_MANAGED_TOOL_NAMES = {"check_connection", "list_instances", "close_ida"}
+_MANAGED_TOOL_NAMES = {"check_connection", "list_instances"}
 
 _LOCK = threading.RLock()
-_SELECTED: Optional[Dict[str, Any]] = None
 _LEASED: set = set()  # instance ids this server process holds a lease on
 _DOCS_INDEX: Optional[DocsIndex] = None
 _DOCS_INSTANCE_ID: Optional[str] = None
+
+_INSTANCE_ID_HELP = (
+    "Target instance id (from open_database's result or list_databases()); "
+    "defaults to the sole live instance, required when several are live"
+)
 
 
 def _field(description: str):
@@ -56,61 +64,62 @@ def _field(description: str):
 
 
 # ============================================================================
-# Instance selection and forwarding
+# Instance resolution and forwarding
 # ============================================================================
 
 
-def _select_entry(entry: Optional[Dict[str, Any]]) -> None:
-    global _SELECTED, _DOCS_INDEX, _DOCS_INSTANCE_ID
-    with _LOCK:
-        _SELECTED = entry
-        if entry is None or entry.get("instance_id") != _DOCS_INSTANCE_ID:
-            _DOCS_INDEX = None
-            _DOCS_INSTANCE_ID = None
-    # Hold a lease from selection/open time, not just forwarded calls, so
-    # close_database by another agent sees us as an active user.
-    if entry is not None:
-        _lease(entry)
-
-
-def set_selected(instance_id: Optional[str]) -> Optional[Dict[str, Any]]:
-    entry = None
-    if instance_id:
-        entry = instances.find_by_id(str(instance_id))
-    else:
-        # Auto-select the most recently started live instance.
-        live = [e for e in instances.list_live_instances() if bridge_client.is_alive(e)]
-        entry = live[-1] if live else None
-    if entry is None or not bridge_client.is_alive(entry):
-        return None
-    _select_entry(entry)
-    return entry
-
-
 def resolve_instance(instance_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-    """Resolve the target instance for a call; auto-select when omitted."""
-    with _LOCK:
-        selected = _SELECTED
+    """Resolve the target instance for a call.
+
+    An explicit ``instance_id`` always wins (and never falls through to
+    another database when dead). Without one, the sole live instance is the
+    implicit target — there is no mutable default selection, so concurrent
+    agents cannot re-route each other's calls. With several live instances an
+    omitted id must fail loudly (see :func:`_routing_error`).
+    """
     if instance_id:
         entry = instances.find_by_id(str(instance_id))
         if entry is None or not bridge_client.is_alive(entry):
             return None
         _lease(entry)
         return entry
-    if selected is not None and bridge_client.is_alive(selected):
-        _lease(selected)
-        return selected
-    # Auto-select only when no explicit selection existed; a dead explicit
-    # selection must NOT silently fall through to another database.
-    if selected is not None:
-        return None
     live = [e for e in instances.list_live_instances() if bridge_client.is_alive(e)]
-    if live:
-        entry = live[-1]
-        _select_entry(entry)
-        _lease(entry)
-        return entry
+    if len(live) == 1:
+        _lease(live[0])
+        return live[0]
     return None
+
+
+def _routing_error(instance_id: Optional[str]) -> Dict[str, Any]:
+    """Explain why resolve_instance failed, with an actionable recovery hint."""
+    if instance_id:
+        entry = instances.find_by_id(str(instance_id))
+        if entry is None:
+            return error_payload(
+                "instance_not_found",
+                f"Instance {instance_id} is not in the registry. "
+                "Use list_databases() to see live instances.",
+            )
+        return error_payload(
+            "instance_gone",
+            f"Instance {instance_id} ({entry.get('input_file') or 'unknown file'}) "
+            "is no longer running. Use list_databases() to see live instances.",
+        )
+    live = [e for e in instances.list_live_instances() if bridge_client.is_alive(e)]
+    if not live:
+        return error_payload(
+            "no_instance",
+            "No live IDA instance available. Call open_database() first.",
+        )
+    listing = "\n".join(
+        f"  {e.get('instance_id')}  {e.get('input_file') or e.get('database_path') or '<unknown>'}"
+        for e in live
+    )
+    return error_payload(
+        "instance_ambiguous",
+        "Multiple IDA instances are live; pass instance_id on this call "
+        "(from open_database's result or list_databases()):\n" + listing,
+    )
 
 
 def _lease(entry: Optional[Dict[str, Any]]) -> None:
@@ -134,27 +143,48 @@ def forward(
     instance_id: Optional[str] = None,
     timeout: Optional[float] = None,
 ) -> Any:
-    """Call one backend tool on the resolved instance."""
+    """Call one backend tool on the resolved instance.
+
+    Calls that carry a timeout get a server-assigned operation_id: when the
+    call times out on this side, the in-flight execution is interrupted on
+    the bridge instead of pinning the worker's thread forever.
+    """
     entry = resolve_instance(instance_id)
     if entry is None:
-        with _LOCK:
-            stale = _SELECTED
-        if stale is not None:
-            return error_payload(
-                "instance_gone",
-                f"Previously selected instance {stale.get('instance_id')} "
-                f"({stale.get('input_file') or 'unknown file'}) is no longer "
-                "running. Re-select with list_databases()/select_database() — "
-                "refusing to silently switch to a different database.",
-            )
-        return error_payload(
-            "no_instance",
-            "No live IDA instance available. Call open_database() first or select an instance via list_databases().",
-        )
+        return _routing_error(instance_id)
+    operation_id: Optional[str] = None
+    if timeout is not None:
+        operation_id = f"{tool}-{os.getpid()}-{threading.get_ident()}-{time.monotonic_ns()}"
     try:
-        return bridge_client.call_tool(entry, tool, params or {}, timeout=timeout)
+        return bridge_client.call_tool(
+            entry,
+            tool,
+            params or {},
+            timeout=timeout,
+            operation_id=operation_id,
+        )
     except Exception as exc:  # noqa: BLE001 - tool boundary
-        return bridge_client.describe_error(exc)
+        described = bridge_client.describe_error(exc)
+        if (
+            operation_id is not None
+            and described.get("error", {}).get("code") == "timeout"
+        ):
+            # The HTTP deadline fired here; the code may still be running in
+            # the worker. Ask the bridge to interrupt it so the thread
+            # unwinds, then surface the cancellation, not just the timeout.
+            cancelled = False
+            try:
+                cancelled = bridge_client.cancel_operation(entry, operation_id)
+            except Exception:  # noqa: BLE001 - cancellation is best effort
+                cancelled = False
+            if cancelled:
+                return error_payload(
+                    "operation_cancelled",
+                    f"{tool} exceeded its {timeout}s timeout; the in-flight "
+                    "execution was interrupted on the instance. Retry with a "
+                    "larger timeout parameter or shorter code.",
+                )
+        return described
 
 
 # ============================================================================
@@ -174,7 +204,7 @@ def _forward_parameter(name: str, annotation: Any, description: str) -> inspect.
 def _build_forward_signature(spec: ToolSpec) -> inspect.Signature:
     source_signature = inspect.signature(spec.fn)
     params = list(source_signature.parameters.values())
-    params.append(_forward_parameter("instance_id", Optional[str], "Instance id override"))
+    params.append(_forward_parameter("instance_id", Optional[str], _INSTANCE_ID_HELP))
     params.append(_forward_parameter("timeout", Optional[int], "Timeout in seconds"))
     return source_signature.replace(parameters=params)
 
@@ -228,7 +258,7 @@ def _build_forward_wrapper(spec: ToolSpec) -> Any:
     wrapper.__signature__ = _build_forward_signature(spec)  # type: ignore[attr-defined]
     wrapper.__annotations__ = dict(source_hints)
     wrapper.__annotations__["instance_id"] = Annotated[
-        Optional[str], _field("Instance id override")
+        Optional[str], _field(_INSTANCE_ID_HELP)
     ]
     wrapper.__annotations__["timeout"] = Annotated[
         Optional[int], _field("Timeout in seconds")
@@ -251,8 +281,9 @@ def build_server() -> "Any":
         version=__version__,
         instructions=(
             "IDA Pro 逆向分析 MCP。先 open_database(path) 打开/附加数据库"
-            "（无头 idalib worker 会自动创建并分析 .i64），list_databases() 查看多实例，"
-            "其余工具作用于当前选中实例，可用 instance_id 参数覆盖。"
+            "（无头 idalib worker 会自动创建并分析 .i64）。多个实例同时打开时，"
+            "每次工具调用都要传 instance_id（来自 open_database 的返回值或 "
+            "list_databases()）；只有一个实例时可省略。"
             "ida_python_reference(query) 查询官方 IDAPython API 文档。"
         ),
     )
@@ -289,13 +320,11 @@ def _register_management_tools(server: "Any") -> None:
         }
 
     server.tool(
-        description="Health check. Returns {ok, instance_id, pid, input_file, ...} for the current IDA instance."
+        description="Health check. Returns {ok, instance_id, pid, input_file, ...} for the resolved IDA instance."
     )(text_result_tool(check_connection))
 
     def list_databases() -> List[dict]:
-        """List live IDA instances (GUI and headless workers)."""
-        current = resolve_instance()
-        current_id = current.get("instance_id") if current else None
+        """List live idalib worker instances."""
         result = []
         for entry in instances.list_live_instances():
             result.append(
@@ -306,91 +335,54 @@ def _register_management_tools(server: "Any") -> None:
                     "input_file": entry.get("input_file"),
                     "database_path": entry.get("database_path"),
                     "started_at": entry.get("started_at"),
-                    "current": entry.get("instance_id") == current_id,
                 }
             )
         return result
 
     server.tool(
-        description="List all live IDA databases/instances ({instance_id, pid, headless, input_file, current})."
+        description="List all live IDA databases/instances ({instance_id, pid, headless, input_file}); pass one as instance_id on tool calls."
     )(text_result_tool(list_databases))
-
-    def select_database(
-        instance_id: Annotated[
-            Optional[str], _field("Instance id from list_databases; omit to auto-select")
-        ] = None,
-    ) -> dict:
-        """Select the default target instance for subsequent tool calls."""
-        entry = set_selected(instance_id)
-        if entry is None:
-            return error_payload(
-                "instance_not_found",
-                "Instance not found or unreachable. Use list_databases() to see live instances.",
-                instance_id=instance_id,
-            )
-        return {"selected_instance_id": entry.get("instance_id")}
-
-    server.tool(
-        description="Choose the default IDA instance for subsequent calls. Returns {selected_instance_id} or {error}."
-    )(text_result_tool(select_database))
 
     def open_database(
         path: Annotated[
             str,
             _field(
-                "Path to a local executable or .i64/.idb database. A live instance "
+                "Path to a local executable or .i64/.idb database. A live worker "
                 "with this file is attached when present; otherwise a headless "
                 "idalib worker opens/creates/analyzes it."
             ),
         ],
-        set_current: Annotated[
-            bool, _field("Make this database the default target (default true)")
-        ] = True,
-        headless: Annotated[
-            str,
-            _field(
-                '"auto" (default: attach, else headless worker), "headless"/"true" '
-                '(force idalib worker), "gui"/"false" (launch the IDA GUI)'
-            ),
-        ] = "auto",
         wait_for_analysis: Annotated[
             bool, _field("Wait for IDA auto-analysis to finish (default true)")
         ] = True,
         timeout: Annotated[
             int, _field("Open/analysis wait timeout in seconds (default 300)")
         ] = 300,
-        extra_args: Annotated[
-            Optional[List[str]], _field("Extra IDA CLI args for GUI launches")
-        ] = None,
     ) -> dict:
         """Open (or attach to) a binary executable, firmware image, or existing
-        .i64/.idb IDA database. Headless idalib workers create and analyze the
-        .i64 for raw binaries; GUI instances attach if the file is already open
-        or launch when headless="gui". Returns the instance record."""
+        .i64/.idb IDA database in a headless idalib worker (the .i64 is created
+        and analyzed for raw binaries). Returns the instance record — cite its
+        instance_id on later tool calls whenever several databases are open."""
         return lifecycle.open_database(
             path,
-            set_current=set_current,
-            headless=headless,
             wait_for_analysis=wait_for_analysis,
             timeout=timeout,
-            extra_args=extra_args,
-            select_callback=lambda instance_id: set_selected(instance_id),
         )
 
     server.tool(
-        description="Open a binary or .i64 database in IDA: attach to a live instance, or spawn a headless idalib worker that creates/analyzes the .i64. Call this first."
+        description="Open a binary or .i64 database in a headless idalib worker (creates/analyzes the .i64). Call this first."
     )(text_result_tool(open_database))
 
     def save_database(
         instance_id: Annotated[
-            Optional[str], _field("Instance id; defaults to the current target")
+            Optional[str], _field(_INSTANCE_ID_HELP)
         ] = None,
         timeout: Annotated[Optional[int], _field("Timeout in seconds")] = None,
     ) -> dict:
         """Save the IDA database (.i64) so renames, comments, types and patches persist."""
         entry = resolve_instance(instance_id)
         if entry is None:
-            return error_payload("no_instance", "No live IDA instance selected.")
+            return _routing_error(instance_id)
         try:
             return lifecycle.save_database(entry)
         except Exception as exc:  # noqa: BLE001
@@ -402,29 +394,26 @@ def _register_management_tools(server: "Any") -> None:
 
     def close_database(
         instance_id: Annotated[
-            Optional[str], _field("Instance id; defaults to the current target")
+            Optional[str], _field(_INSTANCE_ID_HELP)
         ] = None,
         terminate: Annotated[
             bool,
             _field(
-                "Also close GUI instances; headless workers are always shut down "
-                "(saved first) when their last user detaches"
+                "Force shutdown even while other agents still hold leases on "
+                "this worker"
             ),
         ] = False,
         save: Annotated[bool, _field("Save the database before closing")] = True,
     ) -> dict:
-        """Release an IDA database. Headless workers shut down (saving by
-        default); GUI instances stay open unless terminate=true."""
+        """Release an IDA database worker. It is saved and shut down when its
+        last user detaches; terminate=true forces an immediate shutdown."""
         entry = resolve_instance(instance_id)
         if entry is None:
-            return error_payload("no_instance", "No live IDA instance selected.")
-        result = lifecycle.close_database(entry, terminate=terminate, save=save)
-        if instance_id is None and result.get("status") in {"closed", "detached"}:
-            _select_entry(None)
-        return result
+            return _routing_error(instance_id)
+        return lifecycle.close_database(entry, terminate=terminate, save=save)
 
     server.tool(
-        description="Release/detach an IDA database instance. Headless workers are shut down (saved by default); GUI stays open unless terminate=true."
+        description="Release an IDA database worker: saved and shut down when the last user detaches; terminate=true forces shutdown."
     )(text_result_tool(close_database))
 
     def ida_python_reference(

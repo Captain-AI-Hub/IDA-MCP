@@ -8,7 +8,7 @@ Default action serves MCP over stdio (the only transport).::
 Instance operations::
 
     idamcp instances list
-    idamcp open <path> [--gui] [--no-wait]
+    idamcp open <path> [--no-wait]
     idamcp close [--id ID] [--terminate] [--no-save]
     idamcp save [--id ID]
     idamcp tool call NAME [--params JSON] [--id ID]
@@ -89,11 +89,10 @@ def _cmd_instances_list(args: argparse.Namespace) -> int:
         print("No live IDA instances.")
         return EXIT_OK
     for entry in entries:
-        headless = "headless" if entry.get("headless") else "gui"
         input_file = entry.get("input_file") or "<unknown>"
         print(
             f"{entry.get('instance_id')}  pid={entry.get('pid')} "
-            f"port={entry.get('port')} [{headless}] {input_file}"
+            f"port={entry.get('port')} [idalib] {input_file}"
         )
     return EXIT_OK
 
@@ -101,11 +100,8 @@ def _cmd_instances_list(args: argparse.Namespace) -> int:
 def _cmd_open(args: argparse.Namespace) -> int:
     from . import lifecycle
 
-    headless = "gui" if args.gui else "auto"
     result = lifecycle.open_database(
         args.file_path,
-        set_current=False,
-        headless=headless,
         wait_for_analysis=not args.no_wait,
         timeout=args.timeout,
     )
@@ -230,13 +226,9 @@ def build_parser() -> argparse.ArgumentParser:
     instances_list.set_defaults(handler=_cmd_instances_list)
 
     open_parser = subparsers.add_parser(
-        "open", help="Open/attach a binary or .i64 (headless idalib worker by default)"
+        "open", help="Open/attach a binary or .i64 in a headless idalib worker"
     )
     open_parser.add_argument("file_path", help="Path to the executable or IDB")
-    open_parser.add_argument(
-        "--gui", action="store_true",
-        help="Launch the IDA GUI instead of a headless worker",
-    )
     open_parser.add_argument(
         "--no-wait", action="store_true", help="Do not wait for auto-analysis"
     )
@@ -248,7 +240,7 @@ def build_parser() -> argparse.ArgumentParser:
     close_parser = subparsers.add_parser("close", help="Close/detach an IDA instance")
     close_parser.add_argument("--id", default=None, help="Instance id (default: latest)")
     close_parser.add_argument(
-        "--terminate", action="store_true", help="Also close GUI instances"
+        "--terminate", action="store_true", help="Force shutdown even if other users hold leases"
     )
     close_parser.add_argument(
         "--no-save", action="store_true", help="Do not save the database before closing"

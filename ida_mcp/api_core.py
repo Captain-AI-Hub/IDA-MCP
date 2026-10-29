@@ -650,14 +650,23 @@ def add_segment(
 
     ok = ida_shims.add_segment(start, end, name, seg_class, perm_val, bitness_map[bitness])
     if not ok:
-        import ida_kernwin
-        return {
+        detail = None
+        try:
+            import ida_kernwin  # type: ignore
+
+            if hasattr(ida_kernwin, "get_warning_message"):
+                detail = ida_kernwin.get_warning_message(ida_kernwin.SK_WARNING)
+        except Exception:  # noqa: BLE001 - diagnostic detail is best effort
+            detail = None
+        result = {
             "error": "add_segment failed",
-            "detail": ida_kernwin.get_warning_message(ida_kernwin.SK_WARNING),
             "start_ea": hex_addr(start),
             "end_ea": hex_addr(end),
             "bitness": bitness,
         }
+        if detail:
+            result["detail"] = detail
+        return result
 
     return {
         "name": name,

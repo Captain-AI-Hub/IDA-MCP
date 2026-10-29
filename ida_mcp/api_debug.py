@@ -32,14 +32,76 @@ try:
     import idaapi  # type: ignore
     import ida_funcs  # type: ignore
     import ida_dbg  # type: ignore
+    import ida_ida  # type: ignore
 except ImportError:
     idaapi = None
     ida_funcs = None
     ida_dbg = None
+    ida_ida = None
 
 _MAX_DEBUG_REGIONS = 64
 _MAX_DEBUG_MEMORY_BYTES = 4096
 _MAX_DEBUG_TOTAL_BYTES = 1024 * 1024
+
+# Local debugger module per platform (remote names like "gdb"/"windbg" can
+# be passed to dbg_start explicitly).
+_PLATFORM_DEBUGGERS = {"win32": "win32", "darwin": "macos", "linux": "linux"}
+
+
+def _default_debugger_name() -> str:
+    import sys
+
+    return _PLATFORM_DEBUGGERS.get(sys.platform, "linux")
+
+
+def _read_dbg_memory(ea: int, size: int) -> Optional[bytes]:
+    """Read memory of the debugged process; returns bytes or None.
+
+    Prefers ``ida_idd.dbg_read_memory(ea, size)`` (the idc-style wrapper that
+    works under idalib), then the legacy 2-arg ``ida_dbg.read_dbg_memory``
+    from IDA 7/8.
+    """
+    try:
+        import ida_idd  # type: ignore
+
+        if hasattr(ida_idd, "dbg_read_memory"):
+            data = ida_idd.dbg_read_memory(ea, size)
+            if data is not None:
+                return bytes(data)
+    except Exception:  # noqa: BLE001 - fall through to legacy forms
+        pass
+    try:
+        data = ida_dbg.read_dbg_memory(ea, size)  # type: ignore
+        if isinstance(data, (bytes, bytearray)):
+            return bytes(data)
+    except TypeError:
+        # IDA 9 ida_dbg.read_dbg_memory is the 3-arg void* form; the
+        # ida_idd wrapper above already covered it.
+        pass
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
+def _entry_point_ea() -> Optional[int]:
+    try:
+        import ida_entry  # type: ignore
+
+        qty = ida_entry.get_entry_qty()
+        if qty:
+            ordinal = ida_entry.get_entry_ordinal(0)
+            ea = int(ida_entry.get_entry(ordinal))
+            if ea and ea != getattr(idaapi, "BADADDR", -1):
+                return ea
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        ea = int(ida_ida.inf_get_start_ea())
+        if ea and ea != getattr(idaapi, "BADADDR", -1):
+            return ea
+    except Exception:  # noqa: BLE001
+        pass
+    return None
 
 
 def _breakpoint_exists(address: int) -> bool:
@@ -156,10 +218,96 @@ def dbg_regs() -> dict:
 # Call stack
 # ============================================================================
 
+def _arch_frame_regs():
+    """(pc_reg, fp_reg, sp_reg, ptr_size) for frame-pointer walking, or None."""
+    try:
+        procname = str(ida_ida.inf_get_procname()).lower()
+        is64 = bool(ida_ida.inf_is_64bit())
+    except Exception:  # noqa: BLE001
+        return None
+    if procname == "metapc":
+        return ("RIP", "RBP", "RSP", 8) if is64 else ("EIP", "EBP", "ESP", 4)
+    if procname in ("arm", "aarch64") and is64:
+        return ("PC", "X29", "SP", 8)
+    return None
+
+
+def _walk_fp_chain(max_frames: int = 64) -> List[dict]:
+    """Rebuild the call stack by following the frame-pointer chain.
+
+    IDA 9 removed ``ida_dbg.get_call_stack``/``walk_stack`` without a
+    replacement, so on a suspended process we read [fp] = saved fp and
+    [fp+ptr] = return address ourselves. Sanity checks (chain must move up
+    monotonically and stay near the stack pointer) filter binaries compiled
+    with omitted frame pointers.
+    """
+    regs = _arch_frame_regs()
+    if regs is None:
+        return []
+    pc_reg, fp_reg, sp_reg, ptr = regs
+    badaddr = getattr(idaapi, "BADADDR", None)
+    try:
+        if not ida_dbg.is_debugger_on():
+            return []
+        pc = int(ida_dbg.get_reg_val(pc_reg))
+        fp = int(ida_dbg.get_reg_val(fp_reg))
+        sp = int(ida_dbg.get_reg_val(sp_reg))
+    except Exception:  # noqa: BLE001
+        return []
+
+    def _scalar(ea: int) -> Optional[int]:
+        data = _read_dbg_memory(ea, ptr)
+        if data is None or len(data) < ptr:
+            return None
+        return int.from_bytes(data, "little")
+
+    stack_ceiling = sp + 8 * 1024 * 1024
+    addresses = [pc]
+    try:
+        at_func_entry = ida_shims.func_start(pc) == pc
+    except Exception:  # noqa: BLE001
+        at_func_entry = False
+    if at_func_entry:
+        # Prologue not executed yet (e.g. breakpoint on the entry
+        # instruction): RBP still belongs to the caller's frame and this
+        # call's return address sits at [RSP].
+        ret0 = _scalar(sp)
+        if ret0 is not None and ret0 != 0 and ret0 != badaddr:
+            addresses.append(ret0)
+    seen: set = set()
+    for _ in range(max_frames):
+        if fp in seen or fp < sp or fp > stack_ceiling or (fp % ptr) != 0:
+            break
+        seen.add(fp)
+        saved_fp = _scalar(fp)
+        ret = _scalar(fp + ptr)
+        if saved_fp is None or ret is None or ret == 0 or ret == badaddr:
+            break
+        addresses.append(ret)
+        if saved_fp <= fp:
+            break
+        fp = saved_fp
+
+    frames: List[dict] = []
+    for idx, ea in enumerate(addresses):
+        entry = {"index": idx, "ea": hex_addr(ea)}
+        try:
+            fstart = ida_shims.func_start(ea)
+            if fstart is not None:
+                entry["func"] = idaapi.get_func_name(fstart)
+        except Exception:  # noqa: BLE001
+            pass
+        frames.append(entry)
+    return frames
+
+
 @tool
 @idaread
 def dbg_callstack() -> dict:
-    """Get current call stack (requires active debugger)."""
+    """Get current call stack (requires active debugger).
+
+    Uses the official stack APIs when present (IDA 7/8) and otherwise
+    reconstructs the chain from frame pointers (IDA 9)."""
     try:
         if not ida_dbg.is_debugger_on():
             return {"frames": [], "note": "debugger not active"}
@@ -224,8 +372,17 @@ def dbg_callstack() -> dict:
             pass
     
     if not collected:
+        # IDA 9 fallback: rebuild the chain from RBP/EBP/X29 frame pointers.
+        try:
+            frames = _walk_fp_chain()
+            if frames:
+                collected = True
+        except Exception:  # noqa: BLE001
+            pass
+
+    if not collected:
         return {"frames": [], "note": "call stack API unavailable or empty"}
-    
+
     return {"frames": frames}
 
 
@@ -304,31 +461,60 @@ def dbg_list_bps() -> dict:
 
 @tool
 @idawrite
-def dbg_start() -> dict:
-    """Start debugger process (debugger type should be configured manually in IDA)."""
+def dbg_start(
+    debugger: Annotated[
+        Optional[str],
+        "Debugger module name; default is the local debugger for this "
+        "platform ('linux'/'win32'/'macos'). Pass e.g. 'gdb' for remote debugging.",
+    ] = None,
+) -> dict:
+    """Start the debugger on the current input file. The local debugger is
+    loaded automatically; without any existing breakpoints a temporary
+    entry-point breakpoint suspends the process at a deterministic point."""
     try:
         if ida_dbg.is_debugger_on():
             return {"started": False, "note": "debugger already running"}
     except Exception:
         pass
-    
+
+    name = str(debugger or "").strip() or _default_debugger_name()
+    try:
+        if not ida_dbg.load_debugger(name, False):
+            return {
+                "error": f"load_debugger('{name}') failed; pass an installed debugger name",
+                "debugger": name,
+            }
+    except Exception as e:
+        return {"error": f"load_debugger('{name}') failed: {e}"}
+
     try:
         path = idaapi.get_input_file_path()
     except Exception:
         path = None
     if not path:
         return {"error": "cannot determine input file path"}
-    
+
+    # Without a UI there is no "suspend at entry" option: place a one-shot
+    # breakpoint on the entry point so the process suspends predictably.
+    entry_bpt = False
+    try:
+        if ida_dbg.get_bpt_qty() == 0:
+            entry = _entry_point_ea()
+            if entry is not None:
+                entry_bpt = bool(ida_dbg.add_bpt(entry))
+    except Exception:  # noqa: BLE001 - entry bpt is best effort
+        pass
+
     # start process
     try:
         started = ida_dbg.start_process(path, '', '')  # type: ignore
     except Exception as e:
         return {"error": f"start_process failed: {e}"}
-    
+
     ok = bool(started)
     pid = None
     suspended = False
-    
+
     if ok:
         try:
             state = ida_dbg.get_process_state()
@@ -336,18 +522,21 @@ def dbg_start() -> dict:
                 pid = getattr(state, 'pid', None)
         except Exception:
             pid = None
-        
+
         # wait for debugger to suspend
         suspended = _wait_for_debugger_event(2000)
-        
+
         if not suspended:
             try:
                 if ida_dbg.is_debugger_on():
                     suspended = True
             except Exception:
                 pass
-    
-    return {"started": ok, "pid": pid, "suspended": suspended}
+
+    result = {"started": ok, "pid": pid, "suspended": suspended, "debugger": name}
+    if entry_bpt:
+        result["entry_breakpoint"] = True
+    return result
 
 
 @tool
@@ -864,7 +1053,7 @@ def dbg_read_mem(
             continue
         
         try:
-            data = ida_dbg.read_dbg_memory(address, size)  # type: ignore
+            data = _read_dbg_memory(address, size)
             if data is None:
                 results.append({"error": "failed to read", "address": hex_addr(address)})
                 continue

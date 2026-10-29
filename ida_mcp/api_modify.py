@@ -7,7 +7,6 @@ Provides tools:
     - rename_global_variable rename global variable
     - patch_bytes          byte patching
     - apply_patch          export patched input file
-    - add_bookmark         add an IDA bookmark
     - patch_asm            assemble and patch instructions
     - set_op_type          set operand display type (hex/dec/char/...)
     - force_recompile      invalidate cached decompilations
@@ -52,12 +51,16 @@ def _invalidate_strings_cache() -> None:
 @contextmanager
 def suppress_ida_warnings():
     """Temporarily enable batch mode to suppress IDA warning dialogs."""
-    old_batch = ida_kernwin.cvar.batch
-    ida_kernwin.cvar.batch = 1
+    cvar = getattr(ida_kernwin, "cvar", None) if ida_kernwin else None
+    if cvar is None or not hasattr(cvar, "batch"):
+        yield
+        return
+    old_batch = cvar.batch
+    cvar.batch = 1
     try:
         yield
     finally:
-        ida_kernwin.cvar.batch = old_batch
+        cvar.batch = old_batch
 
 @tool
 @idawrite
@@ -636,75 +639,6 @@ def apply_patch(
 # ============================================================================
 # Bookmarks, assembly patching, operand display, decompiler cache
 # ============================================================================
-
-import difflib
-
-try:
-    import ida_ida  # type: ignore
-    import ida_idp  # type: ignore
-    import ida_moves  # type: ignore
-except ImportError:
-    ida_ida = None
-    ida_idp = None
-    ida_moves = None
-
-
-@tool
-@idawrite
-def add_bookmark(
-    address: Annotated[Union[int, str], "Address to bookmark"],
-    description: Annotated[str, "Bookmark description"] = "",
-) -> dict:
-    """Add an IDA bookmark at an address (visible in the bookmarks view)."""
-    parsed = resolve_address(address)
-    if not parsed["ok"] or parsed["value"] is None:
-        return {"error": "invalid address", "address": address}
-    ea = parsed["value"]
-
-    if ida_moves is None or ida_kernwin is None:
-        return {"error": "bookmarks API unavailable in this IDA build", "address": hex_addr(ea)}
-
-    try:
-        # Build a place for the target address. IDA 9.x removed
-        # ida_kernwin.ea2place; clone the idaplace_t class template instead.
-        if hasattr(ida_kernwin, "ea2place"):
-            place = ida_kernwin.ea2place(ea)
-        else:
-            place_id = ida_kernwin.get_place_class_id("idaplace_t")
-            template = ida_kernwin.get_place_class_template(place_id) if place_id >= 0 else None
-            if template is None:
-                return {"error": "idaplace_t place class unavailable", "address": hex_addr(ea)}
-            place = template.clone()
-            ida_place = ida_kernwin.place_t.as_idaplace_t(place)
-            if ida_place is None:
-                return {"error": "cannot create an ea-capable place", "address": hex_addr(ea)}
-            ida_place.ea = ea
-
-        entry = ida_moves.lochist_entry_t()
-        entry.set_place(place)
-
-        # bookmarks_t.get() does not populate entries reliably without widget
-        # user data; probe occupancy via get_desc() instead.
-        slot = None
-        for i in range(1024):
-            try:
-                if ida_moves.bookmarks_t.get_desc(entry, i, None) is None:
-                    slot = i
-                    break
-            except Exception:
-                slot = i
-                break
-        if slot is None:
-            return {"error": "no free bookmark slot", "address": hex_addr(ea)}
-
-        ida_moves.bookmarks_t.mark(entry, slot, "", str(description or ""), None)
-        return {
-            "address": hex_addr(ea),
-            "slot": slot,
-        }
-    except Exception as e:
-        return {"error": f"bookmark failed: {e}", "address": hex_addr(ea)}
-
 
 @tool
 @idawrite

@@ -65,8 +65,6 @@ def ida_instance(request) -> Dict[str, Any]:
 
     result = lifecycle.open_database(
         sample,
-        set_current=False,
-        headless="headless",
         wait_for_analysis=True,
         timeout=request.config.getoption("--ida-open-timeout"),
     )

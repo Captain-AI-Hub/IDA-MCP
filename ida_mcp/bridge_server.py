@@ -1,10 +1,10 @@
 """In-process JSON-RPC bridge served by every IDA-MCP instance.
 
-One stdlib-only HTTP server runs inside each IDA process (GUI plugin or
-idalib worker). It exposes the tool/resource catalog over a private loopback
-endpoint and publishes the instance in the shared JSON registry. The
-standalone MCP server talks to this bridge directly; there is no gateway,
-port registry, or forwarding hop anymore.
+One stdlib-only HTTP server runs inside each idalib worker process. It
+exposes the tool/resource catalog over a private loopback endpoint and
+publishes the instance in the shared JSON registry. The standalone MCP
+server talks to this bridge directly; there is no gateway, port registry,
+or forwarding hop anymore.
 
 Endpoints:
     GET  /healthz           liveness probe
@@ -17,6 +17,7 @@ Endpoints:
 
 from __future__ import annotations
 
+import ctypes
 import json
 import os
 import queue
@@ -38,6 +39,32 @@ _CALL_EXECUTOR_WORKERS = 8
 # The bridge is local-only by design: fixed loopback bind, no auth.
 BRIDGE_HOST = "127.0.0.1"
 BRIDGE_PORT_BASE = 13337
+
+
+class _OperationInterrupt(BaseException):
+    """Asynchronous exception used to stop long-running user code.
+
+    Raised inside the executing thread via PyThreadState_SetAsyncExc — pure
+    Python loops become cancellable without installing an opcode trace.
+    Derived from BaseException so user ``except Exception`` handlers cannot
+    swallow the interruption.
+    """
+
+
+# CPython private API (used by Hex-Rays ida-nexus the same way): inject one
+# exception object into one thread state. A void-pointer argtype lets a null
+# value undo the injection if CPython ever reports multiple matching states.
+_set_async_exc = ctypes.pythonapi.PyThreadState_SetAsyncExc
+_set_async_exc.argtypes = (ctypes.c_ulong, ctypes.c_void_p)
+_set_async_exc.restype = ctypes.c_int
+
+
+def _interrupt_thread(thread_id: int) -> bool:
+    count = _set_async_exc(thread_id, id(_OperationInterrupt))
+    if count > 1:
+        _set_async_exc(thread_id, None)
+        raise RuntimeError("CPython matched multiple bridge execution threads")
+    return count == 1
 
 
 class BridgeState:
@@ -73,6 +100,12 @@ class BridgeState:
         self.loading = False
         self.ready_event = threading.Event()
         self.ready_event.set()
+        # In-flight cancellable operations: operation_id -> thread id under
+        # _active_lock; a generation counter rejects cancellations that
+        # arrive after the operation already finished.
+        self._active_lock = threading.Lock()
+        self._active: Dict[str, int] = {}
+        self._generation = 0
 
     # -- dispatch ----------------------------------------------------------
 
@@ -89,7 +122,13 @@ class BridgeState:
         if fn is None:
             raise KeyError(name)
         params = dict(params or {})
-        future = self._call_executor.submit(self._dispatch, fn, params)
+        operation_id = params.pop("_operation_id", None)
+        if operation_id:
+            future = self._call_executor.submit(
+                self._dispatch_tracked, fn, params, str(operation_id)
+            )
+        else:
+            future = self._call_executor.submit(self._dispatch, fn, params)
         if timeout is None:
             return future.result()
         return future.result(timeout=max(float(timeout), 0.1))
@@ -101,8 +140,53 @@ class BridgeState:
             if threading.current_thread() is threading.main_thread():
                 return fn(**params)
             return self.run_on_main(lambda: fn(**params)).result()
-        # In the GUI the tool decorators marshal onto the IDA main thread.
+        # Outside a worker (tests, tooling) run inline.
         return fn(**params)
+
+    def _dispatch_tracked(
+        self, fn: Callable, params: Dict[str, Any], operation_id: str
+    ) -> Any:
+        """Dispatch with cancellation registration for this operation_id.
+
+        While the tool runs, /cancel_operation can (a) flag IDA's native
+        analysis-interrupt switch so stuck SDK calls unwind, and (b) inject
+        ``_OperationInterrupt`` into this thread so pure-Python loops stop.
+        The interrupt is translated here into a plain TimeoutError so it
+        crosses the concurrent.futures and HTTP boundaries as a normal,
+        serializable error.
+        """
+        with self._active_lock:
+            self._active[operation_id] = threading.get_ident()
+            self._generation += 1
+            generation = self._generation
+        try:
+            return self._dispatch(fn, params)
+        except _OperationInterrupt:
+            raise TimeoutError(
+                f"operation {operation_id} was cancelled before completion"
+            ) from None
+        finally:
+            with self._active_lock:
+                self._active.pop(operation_id, None)
+                self._generation += 1
+
+    def cancel_operation(self, operation_id: str) -> bool:
+        """Interrupt one in-flight operation. True when it was active."""
+        with self._active_lock:
+            thread_id = self._active.get(str(operation_id))
+            if thread_id is None:
+                return False
+            # Flag IDA's native cancel switch first: SDK calls blocked inside
+            # the kernel (auto-analysis, huge decompiles) unwind once set.
+            try:
+                import ida_kernwin  # type: ignore
+
+                ida_kernwin.set_cancelled()
+            except Exception:  # noqa: BLE001 - native flag is best effort
+                pass
+            _interrupt_thread(thread_id)
+            self._generation += 1
+            return True
 
     # -- main-thread executor (idalib workers) -----------------------------
 
@@ -238,7 +322,20 @@ class BridgeHandler(BaseHTTPRequestHandler):
             if not isinstance(params, dict):
                 self._send_json(error_payload("invalid_params", "params must be an object"), 400)
                 return
+            if "_operation_id" in params:
+                self._send_json(
+                    error_payload("invalid_params", "_operation_id is server-assigned"), 400
+                )
+                return
+            if str(payload.get("operation_id") or ""):
+                params = dict(params)
+                params["_operation_id"] = str(payload.get("operation_id"))
             self._guarded(lambda: self.state.call_tool(name, params, timeout))
+            return
+        if path == "/cancel_operation":
+            operation_id = str(payload.get("operation_id") or "")
+            cancelled = self.state.cancel_operation(operation_id)
+            self._send_json({"result": {"cancelled": cancelled}})
             return
         if path == "/docs":
             module_name = str(payload.get("module") or "")
@@ -255,16 +352,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
         state = self.state
         callback = state.on_shutdown
         if callback is None:
-            # GUI plugin path: reuse the close_ida tool (save + timed qexit so
-            # this HTTP response can flush first).
-            def delayed() -> None:
-                time.sleep(0.25)
-                try:
-                    state.call_tool("close_ida", {"save": save}, timeout=30)
-                except Exception as exc:  # noqa: BLE001 - best effort shutdown
-                    print(f"[IDA-MCP-Bridge] shutdown fallback failed: {exc}")
-
-            threading.Thread(target=delayed, name="IDA-MCP-Shutdown", daemon=True).start()
             return
         threading.Thread(
             target=callback, args=(save,), name="IDA-MCP-Shutdown", daemon=True

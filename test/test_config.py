@@ -48,7 +48,7 @@ def test_accessors(tmp_path):
     with patch.object(config, "_CONFIG_FILE", str(tmp_path / "packaged.conf")):
         with patch.object(config, "_user_config_file", return_value=str(tmp_path / "user.conf")):
             with patch.object(config, "_hcli_setting_overrides", return_value={}):
-                assert config.get_ida_path() is None
+                assert not hasattr(config, "get_ida_path")
                 assert config.get_ida_python() is None
                 assert config.get_request_timeout() == 30
                 assert config.is_debug_enabled() is False

@@ -1,5 +1,0 @@
-# Standalone MCP server (stdio) + dev/test runtime dependencies.
-# The in-IDA bridge plugin is stdlib-only and needs no third-party packages.
-fastmcp>=4.0.0b1,<5
-pydantic>=2.12,<3
-pytest>=9,<10

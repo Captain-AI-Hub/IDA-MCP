@@ -1,220 +1,103 @@
-"""Tests for the machine-aware HCLI installer wrapper."""
+"""Tests for the idalib-only configure script (scripts/hcli_install.py)."""
 
 from __future__ import annotations
 
 import importlib.util
-import json
-import zipfile
+import sys
 from pathlib import Path
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "hcli_install.py"
 SPEC = importlib.util.spec_from_file_location("hcli_install", MODULE_PATH)
 assert SPEC and SPEC.loader
-hcli_install = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(hcli_install)
 
 
-def test_parse_idapyswitch_output_prefers_previous_interpreter(tmp_path):
-    py311 = tmp_path / "Python311"
-    py312 = tmp_path / "Python312"
-    py311.mkdir()
-    py312.mkdir()
-    (py311 / "python.exe").write_bytes(b"")
-    (py312 / "python.exe").write_bytes(b"")
-    output = (
-        f"#1: 3.11.9 ('3.11') ({py311}\\python311.dll)\n"
-        f"#2: 3.12.7 ('3.12') ({py312}\\python312.dll)\n"
-        f"IDA previously used: 3.12.7 ({py312}\\python312.dll)\n"
+def _load(monkeypatch, tmp_path):
+    module = importlib.util.module_from_spec(SPEC)
+    SPEC.loader.exec_module(module)
+    monkeypatch.setattr(module, "default_ida_user_dir", lambda: tmp_path)
+    return module
+
+
+def test_resolve_install_dir_reads_ida_config(monkeypatch, tmp_path):
+    module = _load(monkeypatch, tmp_path)
+    (tmp_path / "ida-config.json").write_text(
+        '{"Paths": {"ida-install-dir": "%s"}}' % tmp_path.as_posix(), encoding="utf-8"
     )
-
-    installations = hcli_install.parse_idapyswitch_output(output, windows=True)
-
-    assert [item["version"] for item in installations] == ["3.12.7", "3.11.9"]
-    assert installations[0]["exe"] == str((py312 / "python.exe").resolve())
+    assert module.resolve_install_dir(None) == tmp_path
 
 
-def test_personalize_archive_puts_detected_paths_in_prompt(tmp_path):
-    source = tmp_path / "source.zip"
-    destination = tmp_path / "personalized.zip"
-    manifest = {
-        "plugin": {
-            "settings": [
-                {"key": "ida_path", "name": "IDA executable path", "default": ""},
-                {"key": "ida_python", "name": "IDAPython interpreter path", "default": "auto"},
-            ]
-        }
-    }
-    with zipfile.ZipFile(source, "w") as archive:
-        archive.writestr("ida-plugin.json", json.dumps(manifest))
-        archive.writestr("ida_mcp.py", "")
-
-    ida_executable = Path(r"D:\IDAPro9.4\ida.exe")
-    ida_python = Path(r"C:\Users\tester\AppData\Local\Python\python.exe")
-    hcli_install.personalize_archive(
-        source,
-        destination,
-        ida_executable=ida_executable,
-        ida_python=ida_python,
-    )
-
-    with zipfile.ZipFile(destination) as archive:
-        personalized = json.loads(archive.read("ida-plugin.json"))["plugin"]["settings"]
-    settings = {item["key"]: item for item in personalized}
-    assert str(ida_executable) in settings["ida_path"]["name"]
-    assert settings["ida_path"]["default"] == str(ida_executable)
-    assert str(ida_python) in settings["ida_python"]["name"]
-    assert settings["ida_python"]["default"] == str(ida_python)
+def test_resolve_install_dir_prefers_explicit_and_idadir(monkeypatch, tmp_path):
+    module = _load(monkeypatch, tmp_path)
+    monkeypatch.setenv("IDADIR", str(tmp_path))
+    assert module.resolve_install_dir(None) == tmp_path
+    explicit = tmp_path / "explicit"
+    explicit.mkdir()
+    assert module.resolve_install_dir(str(explicit)) == explicit
 
 
-def test_personalize_archive_ignores_gateway_settings(tmp_path):
-    """gateway_token no longer exists; personalization must not require it."""
-    source = tmp_path / "source.zip"
-    destination = tmp_path / "personalized.zip"
-    manifest = {
-        "plugin": {
-            "settings": [
-                {"key": "ida_path", "name": "IDA executable path", "default": ""},
-                {"key": "ida_python", "name": "IDAPython interpreter path", "default": "auto"},
-            ]
-        }
-    }
-    with zipfile.ZipFile(source, "w") as archive:
-        archive.writestr("ida-plugin.json", json.dumps(manifest))
-
-    hcli_install.personalize_archive(
-        source,
-        destination,
-        ida_executable=Path("/opt/ida/ida"),
-        ida_python=Path("/opt/python/bin/python3"),
-    )
-
-    with zipfile.ZipFile(destination) as archive:
-        settings = json.loads(archive.read("ida-plugin.json"))["plugin"]["settings"]
-    assert settings[0]["default"] == str(Path("/opt/ida/ida"))
+def test_resolve_install_dir_missing_dir_raises(monkeypatch, tmp_path):
+    module = _load(monkeypatch, tmp_path)
+    try:
+        module.resolve_install_dir(str(tmp_path / "missing"))
+    except FileNotFoundError:
+        pass
+    else:
+        raise AssertionError("expected FileNotFoundError")
 
 
-def test_parse_idapyswitch_output_handles_linux_libpython_path(tmp_path):
-    prefix = tmp_path / "python-3.12"
-    bindir = prefix / "bin"
-    libdir = prefix / "lib"
-    bindir.mkdir(parents=True)
-    libdir.mkdir()
-    python = bindir / "python3"
-    python.write_bytes(b"")
-    output = f"#1: 3.12.7 ('3.12') ({libdir / 'libpython3.12.so.1.0'})\n"
-
-    installations = hcli_install.parse_idapyswitch_output(output, windows=False)
-
-    assert installations == [
-        {
-            "index": "1",
-            "version": "3.12.7",
-            "dir": str(prefix),
-            "exe": str(python.resolve()),
-        }
-    ]
+def test_bundled_python_candidates_include_versioned(monkeypatch, tmp_path):
+    module = _load(monkeypatch, tmp_path)
+    bin_dir = tmp_path / "ida-python" / "bin"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "python3.12").touch()
+    names = [p.name for p in module.bundled_python_candidates(tmp_path)]
+    assert "python3.12" in names
 
 
-def test_detect_ida_python_prefers_idat_runtime_probe(tmp_path, monkeypatch):
-    import ida_python_detection
+def test_resolve_idalib_python_probes_in_order(monkeypatch, tmp_path):
+    module = _load(monkeypatch, tmp_path)
+    probed: list[Path] = []
 
-    ida = tmp_path / "ida"
-    idat = tmp_path / "idat"
-    ida.write_bytes(b"")
-    idat.write_bytes(b"")
-    prefix = tmp_path / "python-3.12"
-    python = prefix / "python.exe" if hcli_install.os.name == "nt" else prefix / "bin" / "python3.12"
-    python.parent.mkdir(parents=True)
-    python.write_bytes(b"")
+    good = tmp_path / "good-python"
+    good.touch()
 
-    monkeypatch.setattr(ida_python_detection, "_idat_candidates", lambda _ida: [idat])
+    def fake_can(python, _install_dir):
+        probed.append(python)
+        return python == good
+
+    monkeypatch.setattr(module, "can_idalib", fake_can)
+    found = module.resolve_idalib_python(None, str(good))
+    assert found == good
+    assert probed and probed[-1] == good
+
+    # Nothing importable -> None
+    monkeypatch.setattr(module, "can_idalib", lambda *_a: False)
+    assert module.resolve_idalib_python(tmp_path, None) is None
+
+
+def test_main_persists_and_prints(monkeypatch, tmp_path, capsys):
+    module = _load(monkeypatch, tmp_path)
+    persisted: dict[str, str] = {}
+
+    monkeypatch.setattr(module, "resolve_install_dir", lambda _explicit: tmp_path)
+    good = tmp_path / "python3.12"
+    good.touch()
+    monkeypatch.setattr(module, "resolve_idalib_python", lambda _d, _p: good)
     monkeypatch.setattr(
-        ida_python_detection,
-        "_probe_idat",
-        lambda _idat, ida_user_dir=None: {
-            "prefix": str(prefix),
-            "base_prefix": str(prefix),
-            "executable": str(idat),
-            "version_major": 3,
-            "version_minor": 12,
-        },
+        module,
+        "persist_ida_python",
+        lambda python: persisted.update({"ida_python": str(python)}) or True,
     )
 
-    assert hcli_install.detect_ida_python(ida) == python.resolve()
+    assert module.main([]) == 0
+    out = capsys.readouterr().out
+    assert str(good) in out
+    assert persisted == {"ida_python": str(good)}
 
 
-def test_build_hcli_environment_forces_detected_idapython():
-    python = Path("/opt/python-3.12/bin/python3")
-
-    environment = hcli_install.build_hcli_environment(python, {"PATH": "/usr/bin"})
-
-    assert environment["PATH"] == "/usr/bin"
-    assert environment["HCLI_CURRENT_IDA_PYTHON_EXE"] == str(python)
-
-
-def test_mcp_client_config_is_stdio():
-    value = hcli_install.mcp_client_config()
-
-    server = value["mcpServers"]["ida-mcp"]
-    assert server == {"command": "uvx", "args": ["idamcp-hub", "stdio"]}
-
-
-def test_reads_selected_ida_from_hcli_config(tmp_path, monkeypatch):
-    idausr = tmp_path / "idausr"
-    ida_dir = tmp_path / "ida-install"
-    idausr.mkdir()
-    ida_dir.mkdir()
-    executable_name = "ida.exe" if hcli_install.os.name == "nt" else "ida"
-    ida_executable = ida_dir / executable_name
-    ida_executable.write_bytes(b"")
-    (idausr / "ida-config.json").write_text(
-        json.dumps({"Paths": {"ida-install-dir": str(ida_dir)}}),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("HCLI_IDAUSR", str(idausr))
-    monkeypatch.delenv("IDAUSR", raising=False)
-
-    assert hcli_install._ida_executable_from_hcli_config() == ida_executable.resolve()
-
-
-def test_reads_selected_ida_from_windows_appdata_default(tmp_path, monkeypatch):
-    appdata = tmp_path / "AppData"
-    idausr = appdata / "Hex-Rays" / "IDA Pro"
-    ida_dir = tmp_path / "ida-install"
-    idausr.mkdir(parents=True)
-    ida_dir.mkdir()
-    ida_executable = ida_dir / "ida.exe"
-    ida_executable.write_bytes(b"")
-    (idausr / "ida-config.json").write_text(
-        json.dumps({"Paths": {"ida-install-dir": str(ida_dir)}}),
-        encoding="utf-8",
-    )
-    import ida_python_detection
-
-    monkeypatch.setattr(ida_python_detection, "_is_windows", lambda: True)
-    monkeypatch.setattr(hcli_install, "_is_windows", lambda: True)
-    monkeypatch.setenv("APPDATA", str(appdata))
-    monkeypatch.delenv("HCLI_IDAUSR", raising=False)
-    monkeypatch.delenv("IDAUSR", raising=False)
-
-    assert hcli_install._ida_executable_from_hcli_config() == ida_executable.resolve()
-
-
-def test_manifest_prompts_for_idapython_and_auto_start_defaults_on():
-    manifest = json.loads(
-        (Path(__file__).resolve().parents[1] / "ida-plugin.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    settings = {item["key"]: item for item in manifest["plugin"]["settings"]}
-
-    assert "gateway" not in settings
-    assert "gateway_token" not in settings
-    assert "enable_unsafe" not in settings
-    assert settings["ida_python"]["default"] == "auto"
-    assert settings["ida_python"]["prompt"] is True
-    for removed in ("auto_start", "open_in_ida_autonomous", "instance_host",
-                    "instance_port", "launch_bundle_dir", "idalib_python"):
-        assert removed not in settings, removed
-    # Zero in-IDA dependencies: the bridge is stdlib-only.
-    assert manifest["plugin"]["pythonDependencies"] == []
+def test_main_errors_without_idalib_python(monkeypatch, tmp_path, capsys):
+    module = _load(monkeypatch, tmp_path)
+    monkeypatch.setattr(module, "resolve_install_dir", lambda _e: tmp_path)
+    monkeypatch.setattr(module, "resolve_idalib_python", lambda _d, _p: None)
+    assert module.main([]) == 1
+    assert "import idapro" in capsys.readouterr().err

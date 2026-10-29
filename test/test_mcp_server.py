@@ -25,7 +25,6 @@ def _registry_cleanup():
 
     yield
     rpc.reset_registry()
-    mcp_server._select_entry(None)
 
 
 def test_build_server_registers_management_and_forwarded_tools():
@@ -35,7 +34,6 @@ def test_build_server_registers_management_and_forwarded_tools():
     for expected in (
         "open_database",
         "list_databases",
-        "select_database",
         "save_database",
         "close_database",
         "check_connection",
@@ -43,12 +41,18 @@ def test_build_server_registers_management_and_forwarded_tools():
         "sample_tool",
     ):
         assert expected in names, f"missing tool {expected}"
+    # Default-selection was removed: routing is per-call via instance_id.
+    assert "select_database" not in names
     # close_ida is management-owned and not forwarded
     assert "close_ida" not in names
 
 
 def test_forward_without_instance_returns_error_payload(monkeypatch):
+    from ida_mcp import bridge_client as bc
+    from ida_mcp import instances as instances_mod
+
     monkeypatch.setattr(mcp_server, "resolve_instance", lambda _id=None: None)
+    monkeypatch.setattr(instances_mod, "list_live_instances", lambda: [])
     result = mcp_server.forward("sample_tool", {"value": 5})
     assert result["error"]["code"] == "no_instance"
 
@@ -126,25 +130,47 @@ def test_no_http_transport_remains():
     assert not hasattr(mcp_server, "serve")
 
 
-def test_stale_selection_refuses_silent_switch(monkeypatch, tmp_path):
-    """A dead explicit selection must error, not fall through to another DB."""
+def test_stateless_routing_rules(monkeypatch):
+    """No default selection exists: dead explicit ids error, the sole live
+    instance is the implicit target, and several live instances without an
+    explicit id fail loudly instead of routing to an arbitrary database."""
     from ida_mcp import bridge_client as bc
     from ida_mcp import instances as instances_mod
 
-    dead = {"instance_id": "i-dead", "port": 13399, "pid": 1}
-    other = {"instance_id": "i-other", "port": 13400, "pid": 2}
-    monkeypatch.setattr(instances_mod, "list_live_instances", lambda: [other])
-    monkeypatch.setattr(bc, "is_alive", lambda entry: entry["instance_id"] == "i-other")
-    mcp_server._select_entry(dead)
+    sole = {"instance_id": "i-sole", "port": 13400, "pid": 2, "input_file": "a.exe"}
+    second = {"instance_id": "i-second", "port": 13402, "pid": 3, "input_file": "b.exe"}
+    monkeypatch.setattr(bc, "is_alive", lambda entry: entry["instance_id"] != "i-dead")
+    registry = {
+        "i-sole": sole,
+        "i-second": second,
+        "i-dead": {"instance_id": "i-dead", "input_file": "dead.exe"},
+    }
+    monkeypatch.setattr(instances_mod, "find_by_id", lambda iid: registry.get(iid))
 
-    result = mcp_server.forward("sample_tool", {})
+    # A dead explicit id errors and never falls through to another database.
+    monkeypatch.setattr(instances_mod, "list_live_instances", lambda: [sole])
+    result = mcp_server.forward("sample_tool", {}, instance_id="i-dead")
     assert result["error"]["code"] == "instance_gone"
     assert "i-dead" in result["error"]["message"]
 
-    # No selection at all -> auto-pick still works.
-    mcp_server._select_entry(None)
+    # An unknown explicit id is reported as not found.
+    result = mcp_server.forward("sample_tool", {}, instance_id="i-nope")
+    assert result["error"]["code"] == "instance_not_found"
+
+    # Sole live instance is the implicit target.
     picked = mcp_server.resolve_instance()
-    assert picked and picked["instance_id"] == "i-other"
+    assert picked and picked["instance_id"] == "i-sole"
+
+    # Several live instances without an explicit id -> loud ambiguity error.
+    monkeypatch.setattr(instances_mod, "list_live_instances", lambda: [sole, second])
+    result = mcp_server.forward("sample_tool", {})
+    assert result["error"]["code"] == "instance_ambiguous"
+    assert "i-sole" in result["error"]["message"]
+    assert "i-second" in result["error"]["message"]
+
+    # ... while an explicit id still routes deterministically.
+    picked = mcp_server.resolve_instance("i-second")
+    assert picked and picked["instance_id"] == "i-second"
 
 
 def test_close_database_respects_other_holders(tmp_path, monkeypatch):
