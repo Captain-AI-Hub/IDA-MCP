@@ -167,9 +167,8 @@ def test_stateless_routing_rules(monkeypatch):
     assert result["error"]["code"] == "instance_ambiguous"
     assert "i-sole" in result["error"]["message"]
     assert "i-second" in result["error"]["message"]
-    # The error must actively steer the model away from closing instances
-    # to reduce ambiguity (observed model behavior before this wording).
-    assert "close" in result["error"]["message"].lower()
+    # The error must tell the model to retry with instance_id (not to
+    # pick another action).
     assert "retry" in result["error"]["message"]
 
     # ... while an explicit id still routes deterministically.

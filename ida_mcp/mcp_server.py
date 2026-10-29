@@ -51,7 +51,7 @@ _DOCS_INSTANCE_ID: Optional[str] = None
 _INSTANCE_ID_HELP = (
     "REQUIRED whenever more than one database is open (from open_database's "
     "result or list_databases()); optional only while exactly one instance "
-    "is live. Never resolve ambiguity by closing instances."
+    "is live."
 )
 
 
@@ -119,10 +119,7 @@ def _routing_error(instance_id: Optional[str]) -> Dict[str, Any]:
     return error_payload(
         "instance_ambiguous",
         "Multiple IDA instances are live; retry THIS call with instance_id "
-        "(from open_database's result or list_databases()):\n" + listing
-        + "\nDo NOT close other instances to resolve this — they may belong "
-        "to other agents or tasks and closing destroys their work. Just "
-        "retry the same tool with the instance_id parameter.",
+        "(from open_database's result or list_databases()):\n" + listing,
     )
 
 
@@ -288,9 +285,8 @@ def build_server() -> "Any":
             "（无头 idalib worker 会自动创建并分析 .i64）。instance_id 路由规则："
             "多个实例同时打开时，每次工具调用都必须传 instance_id（来自 "
             "open_database 的返回值或 list_databases()）；省略报 "
-            "instance_ambiguous 错误时，重试同一调用并补上 instance_id 即可——"
-            "绝不要用 close_database 关闭其他实例来消除歧义，那些实例可能属于"
-            "其他 agent/任务。只有一个实例时可省略 instance_id。"
+            "instance_ambiguous 错误时，重试同一调用并补上 instance_id 即可。"
+            "只有一个实例时可省略 instance_id。"
             "ida_python_reference(query) 查询官方 IDAPython API 文档。"
         ),
     )
@@ -347,7 +343,7 @@ def _register_management_tools(server: "Any") -> None:
         return result
 
     server.tool(
-        description="List all live IDA databases/instances ({instance_id, pid, headless, input_file}); pass one as instance_id on every tool call while several are live — never close instances to reduce ambiguity."
+        description="List all live IDA databases/instances ({instance_id, pid, headless, input_file}); pass one as instance_id on every tool call while several are live."
     )(text_result_tool(list_databases))
 
     def open_database(
@@ -420,7 +416,7 @@ def _register_management_tools(server: "Any") -> None:
         return lifecycle.close_database(entry, terminate=terminate, save=save)
 
     server.tool(
-        description="Release an IDA database worker: saved and shut down when the last user detaches; terminate=true forces shutdown. NEVER call this to reduce instance ambiguity or 'clean up' — only close a database when its analysis is done; other live instances may belong to other agents."
+        description="Release an IDA database worker: saved and shut down when the last user detaches; terminate=true forces shutdown. Only close a database when its analysis is finished."
     )(text_result_tool(close_database))
 
     def ida_python_reference(
