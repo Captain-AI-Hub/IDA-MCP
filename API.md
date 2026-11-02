@@ -22,6 +22,13 @@
 | `close_database` | `instance_id?`, `terminate=false`, `save=true` | 释放 worker：最后一个使用者 detach 时保存并关闭；`terminate=true` 无视其他租约强制关闭 |
 | `check_connection` | — | 已解析实例的健康检查（pid/端口/路径/IDA 版本） |
 
+### 1.2 CLI（`idamcp-hub <cmd>`，非 MCP 工具）
+
+| 命令 | 参数 | 说明 |
+| --- | --- | --- |
+| `dump` | `path`；`--asm-only/--pseudo-only`；`-f REGEX`；`-o FILE`；`--timeout` | 非交互导出全部匹配函数的汇编/伪代码（idalib-dump 风格），stdout 或文件 |
+| `tui` | `path`；`--timeout` | 交互式终端 UI（键位 g/x/p/f/n/m/G/b），需安装 `idamcp-hub[tui]`（textual） |
+
 ### 1.2 文档
 
 | 工具 | 参数 | 说明 |

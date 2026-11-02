@@ -14,6 +14,8 @@ Instance operations::
     idamcp tool call NAME [--params JSON] [--id ID]
     idamcp reference "query" [--module ida_funcs]
     idamcp config show
+    idamcp-hub dump <path> [--asm-only|--pseudo-only] [-f REGEX] [-o FILE]
+    idamcp-hub tui <path>     # interactive terminal UI (needs [tui] extra)
 """
 
 from __future__ import annotations
@@ -229,6 +231,28 @@ def _cmd_config_show(_args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_dump(args: argparse.Namespace) -> int:
+    from .tui import dump as dump_mod
+
+    return dump_mod.run_dump(
+        args.file_path,
+        name_filter=args.filter,
+        asm=not args.pseudo_only,
+        pseudo=not args.asm_only,
+        output=args.output,
+        open_timeout=float(args.timeout),
+    )
+
+
+def _cmd_tui(args: argparse.Namespace) -> int:
+    try:
+        from .tui import app as app_mod
+    except ImportError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+    return app_mod.run_tui(args.file_path, open_timeout=float(args.timeout))
+
+
 # ============================================================================
 # Parser
 # ============================================================================
@@ -299,6 +323,30 @@ def build_parser() -> argparse.ArgumentParser:
     config_sub = config_parser.add_subparsers(dest="config_command")
     config_show = config_sub.add_parser("show", help="Print the effective configuration")
     config_show.set_defaults(handler=_cmd_config_show)
+
+    dump_parser = subparsers.add_parser(
+        "dump",
+        help="Dump asm/pseudocode listings for a binary (idalib-dump style)",
+    )
+    dump_parser.add_argument("file_path", help="Path to the executable or IDB")
+    _add_mode = dump_parser.add_mutually_exclusive_group()
+    _add_mode.add_argument("--asm-only", action="store_true", help="Assembly only")
+    _add_mode.add_argument("--pseudo-only", action="store_true", help="Pseudocode only")
+    dump_parser.add_argument("-f", "--filter", default=None, help="Function name regex")
+    dump_parser.add_argument("-o", "--output", default=None, help="Write to file (default stdout)")
+    dump_parser.add_argument(
+        "--timeout", type=int, default=300, help="Open timeout in seconds (default 300)"
+    )
+    dump_parser.set_defaults(handler=_cmd_dump)
+
+    tui_parser = subparsers.add_parser(
+        "tui", help="Interactive terminal UI over the bridge (needs the [tui] extra)"
+    )
+    tui_parser.add_argument("file_path", help="Path to the executable or IDB")
+    tui_parser.add_argument(
+        "--timeout", type=int, default=300, help="Open timeout in seconds (default 300)"
+    )
+    tui_parser.set_defaults(handler=_cmd_tui)
 
     return parser
 
