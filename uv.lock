@@ -506,20 +506,18 @@ wheels = [
 
 [[package]]
 name = "idamcp-hub"
-version = "1.1.0"
+version = "1.1.1"
 source = { editable = "." }
 dependencies = [
     { name = "fastmcp" },
     { name = "pydantic" },
+    { name = "textual" },
 ]
 
 [package.optional-dependencies]
 dev = [
     { name = "colorama" },
     { name = "pytest" },
-]
-tui = [
-    { name = "textual" },
 ]
 
 [package.metadata]
@@ -528,9 +526,9 @@ requires-dist = [
     { name = "fastmcp", specifier = ">=4.0.0b1,<5" },
     { name = "pydantic", specifier = ">=2.12,<3" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9,<10" },
-    { name = "textual", marker = "extra == 'tui'", specifier = ">=8,<9" },
+    { name = "textual", specifier = ">=8,<9" },
 ]
-provides-extras = ["tui", "dev"]
+provides-extras = ["dev"]
 
 [[package]]
 name = "idna"

@@ -27,7 +27,7 @@
 | 命令 | 参数 | 说明 |
 | --- | --- | --- |
 | `dump` | `path`；`--asm-only/--pseudo-only`；`-f REGEX`；`-o FILE`；`--timeout` | 非交互导出全部匹配函数的汇编/伪代码（idalib-dump 风格），stdout 或文件 |
-| `tui` | `path`；`--timeout` | 交互式终端 UI（键位 g/x/p/f/n/m/G/b），需安装 `idamcp-hub[tui]`（textual） |
+| `tui` | `path`；`--timeout` | 交互式终端 UI（键位 g/x/p/f/n/m/G/b），textual 随包默认安装 |
 
 ### 1.2 文档
 

@@ -29,8 +29,8 @@ front-end over the same workers/bridge (the `uvx` side, not inside the worker):
 - call graph navigation; optional ASCII/Unicode CFG rendering from
   get_basic_blocks (graphviz optional);
 - multi-instance tabs by instance_id (reuses the routing rules verbatim).
-- Design notes: a `textual` app in `ida_mcp/tui/` (optional dependency,
-  `idamcp-hub[tui]`), talking to the bridge through bridge_client; zero new
+- Design notes: a `textual` app in `ida_mcp/tui/` (textual is a default
+  dependency since 1.1.1), talking to the bridge through bridge_client; zero new
   deps inside the worker. The non-interactive `idamcp-hub dump` ships
   alongside for CI use. Multi-instance tabs landed as instance_id routing
   (single-target TUI opens/attaches by path like the other CLI verbs).

@@ -3,7 +3,7 @@
 A small textual app, host-side: disassembly/pseudocode panes, function
 sidebar, seek and xref navigation, rename and comments — everything rendered
 from the existing tool catalog via ``bridge_client``. Requires
-``pip install idamcp-hub[tui]`` (textual); never loaded inside a worker.
+textual ships as a default dependency; never loaded inside a worker.
 
 Usage (via idamcp-hub):
     idamcp-hub tui <path>          # open (or attach) and browse
@@ -21,8 +21,8 @@ try:
     from textual.widgets import Footer, Header, Input, Static, Tree
 except ImportError as exc:  # pragma: no cover - optional dependency
     raise ImportError(
-        "the interactive TUI needs textual; install with: "
-        "pip install 'idamcp-hub[tui]' (or uvx --extra tui ...)"
+        "the interactive TUI needs textual; reinstall idamcp-hub "
+        "(pip install --upgrade idamcp-hub or uv tool upgrade idamcp-hub)"
     ) from exc
 
 

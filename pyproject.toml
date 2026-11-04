@@ -1,6 +1,6 @@
 [project]
 name = "idamcp-hub"
-version = "1.1.0"
+version = "1.1.1"
 description = "IDA Pro MCP server: stdio transport, headless idalib workers, and official IDAPython reference."
 readme = "README.md"
 license = "GPL-3.0-only"
@@ -8,12 +8,10 @@ requires-python = ">=3.11"
 dependencies = [
     "fastmcp>=4.0.0b1,<5",
     "pydantic>=2.12,<3",
+    "textual>=8,<9",
 ]
 
 [project.optional-dependencies]
-tui = [
-    "textual>=8,<9",
-]
 dev = [
     "pytest>=9,<10",
     "colorama>=0.4,<1",

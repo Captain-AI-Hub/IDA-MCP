@@ -15,7 +15,7 @@ Instance operations::
     idamcp reference "query" [--module ida_funcs]
     idamcp config show
     idamcp-hub dump <path> [--asm-only|--pseudo-only] [-f REGEX] [-o FILE]
-    idamcp-hub tui <path>     # interactive terminal UI (needs [tui] extra)
+    idamcp-hub tui <path>     # interactive terminal UI
 """
 
 from __future__ import annotations
@@ -340,7 +340,7 @@ def build_parser() -> argparse.ArgumentParser:
     dump_parser.set_defaults(handler=_cmd_dump)
 
     tui_parser = subparsers.add_parser(
-        "tui", help="Interactive terminal UI over the bridge (needs the [tui] extra)"
+        "tui", help="Interactive terminal UI over the bridge"
     )
     tui_parser.add_argument("file_path", help="Path to the executable or IDB")
     tui_parser.add_argument(
