@@ -310,6 +310,3 @@ def run_tui(path: str, *, open_timeout: float = 300.0) -> int:
     entry = result.get("instance") or {}
     IDATuiApp(BridgeUI(entry)).run()
     return 0
-
-    def __init__(self, label: str):
-        self.label = label
