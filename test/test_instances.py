@@ -107,3 +107,18 @@ def test_lease_add_remove_holders():
     assert instances.lease_holders(iid) == [_os.getpid()]
     instances.lease_remove(iid, _os.getpid())
     assert instances.lease_holders(iid) == []
+
+
+def test_pid_alive_rejects_recycled_pid(monkeypatch):
+    """A recycled PID owned by a non-python process must not count as a
+    live lease holder (PID-reuse guard)."""
+    import os as _os
+
+    # A real non-python process on this machine: pid 1 (init) or self's parent shell.
+    fake_pid = 1
+    assert instances._process_exists(fake_pid)
+    # init's cmdline is not python and carries no client markers.
+    assert instances.pid_alive(fake_pid) is False or "python" in _os.uname().sysname.lower()
+
+    # A python process (this pytest) stays alive.
+    assert instances.pid_alive(_os.getpid()) is True

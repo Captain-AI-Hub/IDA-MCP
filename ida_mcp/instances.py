@@ -55,9 +55,23 @@ def new_instance_id() -> str:
 
 
 def pid_alive(pid: int) -> bool:
-    """Return True when ``pid`` refers to a running process."""
+    """Return True when ``pid`` refers to a running process.
+
+    PID reuse can resurrect a dead lease: the OS reassigns the number to an
+    unrelated process and ``os.kill(pid, 0)`` starts succeeding again, so a
+    crashed client's lease looks immortal and close_database refuses to shut
+    the worker down. Lease filtering therefore also checks that the process
+    actually looks like one of our clients (python running idamcp/ida_mcp),
+    not just that the number is alive.
+    """
     if not isinstance(pid, int) or pid <= 0:
         return False
+    if not _process_exists(pid):
+        return False
+    return _looks_like_ida_mcp_process(pid)
+
+
+def _process_exists(pid: int) -> bool:
     try:
         if os.name == "nt":
             import ctypes
@@ -87,6 +101,37 @@ def pid_alive(pid: int) -> bool:
         return True
     except OSError:
         return False
+
+
+_CLIENT_MARKERS = ("idamcp", "ida_mcp", "pytest")
+
+
+def _looks_like_ida_mcp_process(pid: int) -> bool:
+    """Whether ``pid`` is a plausible IDA-MCP client (our python/CLI/tests).
+
+    Guards lease liveness against PID reuse: a recycled number owned by an
+    unrelated process (a daemon, a shell) must not keep a dead client's
+    lease alive. /proc reading is Linux/macOS only; on Windows we accept
+    the plain liveness signal (PID reuse there is far rarer).
+    """
+    if os.name == "nt":
+        return True
+    try:
+        cmdline = open(f"/proc/{pid}/cmdline", "rb").read().decode("utf-8", "replace")
+    except OSError:
+        # No /proc (macOS) or the process died between the two checks.
+        return True
+    joined = cmdline.replace("\x00", " ").lower()
+    if not joined.strip():
+        # Kernel threads and zombies have empty cmdlines; a zombie client
+        # still holds its lease until reaped, so keep those alive too.
+        return True
+    if any(marker in joined for marker in _CLIENT_MARKERS):
+        return True
+    # Any python interpreter could be a client (scripts, tests, uv venvs);
+    # IDA-MCP never runs from a non-python binary, so non-python processes
+    # (snapd, shells, daemons) are the reuse cases we want to reject.
+    return "python" in joined
 
 
 # ============================================================================

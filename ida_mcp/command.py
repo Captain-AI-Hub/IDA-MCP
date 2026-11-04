@@ -250,7 +250,9 @@ def _cmd_tui(args: argparse.Namespace) -> int:
     except ImportError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_USAGE
-    return app_mod.run_tui(args.file_path, open_timeout=float(args.timeout))
+    return app_mod.run_tui(
+        args.file_path, keep_open=bool(args.keep_open), open_timeout=float(args.timeout)
+    )
 
 
 # ============================================================================
@@ -343,6 +345,10 @@ def build_parser() -> argparse.ArgumentParser:
         "tui", help="Interactive terminal UI over the bridge"
     )
     tui_parser.add_argument("file_path", help="Path to the executable or IDB")
+    tui_parser.add_argument(
+        "--keep-open", action="store_true",
+        help="Keep the worker alive after quitting (q closes it when this TUI is its last user)"
+    )
     tui_parser.add_argument(
         "--timeout", type=int, default=300, help="Open timeout in seconds (default 300)"
     )

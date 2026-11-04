@@ -22,9 +22,13 @@ MCP 客户端 ──stdio──▶ idamcp-hub 独立进程
   以 instance_id 标识各数据库；无 `select_database` 默认选中——每次调用显式传
   `instance_id`，省略时仅在恰好一个活跃实例时隐式路由，多实例并存时省略即报错
   （多 agent 并发不会互相改道）。无头 worker 随最后一个使用者关闭（默认先保存）。
-- **终端 UI（v1.1）**：`dump`（非交互 asm/伪代码导出）与 `tui`（r2 风格交互浏览：
-  反汇编/伪代码窗格、函数侧栏、seek/xref/重命名/注释、call graph 与 ASCII CFG），
-  textual 随包默认安装；全部跑在宿主侧（uvx 环境）经桥调用现有工具，worker 内零新增依赖。
+- **终端 UI（v1.1+）**：`dump`（非交互 asm/伪代码导出）与 `tui`（r2 风格交互浏览）。
+  tui：左侧函数侧栏**输入即过滤**、ENTER 打开；主窗格可滚动；`g` seek（名称/地址，
+  亦解析地址所在函数）、`p` 反汇编⇄伪代码、`x`/`f` xref 查看与跟随、`G`/`b` 在当前
+  函数上直接看 call graph / ASCII CFG、`n`/`m` 重命名/注释、`r` 刷新列表。
+  **`q` 退出并保存关闭 worker（TUI 是最后使用者时）；`ctrl+q` 保留 worker 给
+  MCP 等其他客户端继续用**（或 `--keep-open`）。textual 随包默认安装；全部跑在
+  宿主侧（uvx 环境）经桥调用现有工具，worker 内零新增依赖。
 - **官方 IDAPython 文档**：`ida_python_reference(query)` 基于当前 IDA 运行时构建
   BM25 索引（约 2 万条 API 签名 + 文档字符串），版本永远匹配。
 - **worker 进程内零第三方依赖**：桥为纯标准库实现。
@@ -97,7 +101,7 @@ idamcp-hub save [--id ID]
 idamcp-hub tool call <name> --params '{"addr":"main"}'
 idamcp-hub reference "decompile function" [--module ida_funcs]
 idamcp-hub dump <path> [-f REGEX] [--asm-only|--pseudo-only] [-o FILE]
-idamcp-hub tui <path>           # 交互式终端 UI（textual 随包默认安装）
+idamcp-hub tui <path>           # 交互式终端 UI；q 保存退出，ctrl+q 保留 worker
 idamcp-hub config show
 ```
 
