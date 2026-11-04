@@ -62,8 +62,19 @@ class BridgeUI:
             err = described.get("error", {})
             return {"error": err.get("message", str(exc))}
 
-    def functions(self) -> List[Dict[str, Any]]:
-        result = self.call("list_functions", {"offset": 0, "count": 1000})
+    def functions(self, pattern: Optional[str] = None, count: int = 1000) -> Dict[str, Any]:
+        """Query functions; returns {"total": int, "items": [entry...]}.
+
+        The bridge's list_functions supports server-side name filtering and
+        reports the true total, so the sidebar never needs to page through
+        everything on huge binaries.
+        """
+        params: Dict[str, Any] = {"offset": 0, "count": count}
+        if pattern:
+            params["pattern"] = pattern
+        result = self.call("list_functions", params)
+        if isinstance(result, dict) and result.get("error"):
+            return {"total": 0, "items": [], "error": result["error"]}
         items = str(result.get("items", "")) if isinstance(result, dict) else ""
         entries = []
         for line in items.splitlines():
@@ -76,7 +87,11 @@ class BridgeUI:
                         "name": m.group(3).strip(),
                     }
                 )
-        return entries
+        total = result.get("total", len(entries)) if isinstance(result, dict) else len(entries)
+        # Real functions first: extern/import thunks (dots, __libc__, etc.)
+        # clutter firmware lists where they vastly outnumber real code.
+        entries.sort(key=lambda fn: (fn["name"].startswith(".") or fn["name"].startswith("__"), fn["start_ea"]))
+        return {"total": int(total or 0), "items": entries}
 
     def disasm(self, target: str) -> str:
         result = self.call("disasm", {"addr": target})
@@ -162,42 +177,84 @@ class BridgeUI:
 
 
 class FunctionSidebar:
-    """Searchable function list backed by BridgeUI.functions()."""
+    """Searchable function list backed by server-side list_function filtering.
+
+    Big binaries hold tens of thousands of functions; pulling them all
+    (even in pages) freezes the UI and the 1000-per-call cap silently
+    hides anything past the first page. The bridge already supports a
+    server-side ``pattern`` filter, so the sidebar asks the worker to
+    narrow instead: empty filter shows the first page plus the true total;
+    typing re-queries with the pattern. Local resolution (seek by address
+    inside a listed function) works off whatever is currently listed.
+    """
+
+    PAGE = 1000
 
     def __init__(self, ui: BridgeUI):
         self.ui = ui
-        self.all: List[Dict[str, Any]] = []
         self.filtered: List[Dict[str, Any]] = []
+        self.total = 0
+        self.current_pattern: Optional[str] = None
 
-    def reload(self) -> int:
-        self.all = self.ui.functions()
-        self.filtered = list(self.all)
-        return len(self.all)
+    def reload(self, pattern: Optional[str] = None) -> int:
+        self.current_pattern = pattern
+        result = self.ui.functions(pattern=pattern, count=self.PAGE)
+        self.total = result.get("total", 0)
+        self.filtered = result.get("items", [])
+        return len(self.filtered)
 
     def apply_filter(self, text: str) -> List[Dict[str, Any]]:
-        text = text.strip().lower()
+        text = text.strip()
         if not text:
-            self.filtered = list(self.all)
-        else:
-            self.filtered = [
-                fn for fn in self.all
-                if text in fn["name"].lower()
-                or text in f"{fn['start_ea']:x}"
-            ]
-        return self.filtered
+            return self.reload(None) and self.filtered
+        # hex-address input narrows locally against the shown page; names
+        # go to the server so renamed functions are always findable.
+        try:
+            int(text, 16)
+        except ValueError:
+            return self.reload(text) and self.filtered
+        return self.reload(text) and self.filtered
 
     def resolve(self, query: str) -> Optional[Dict[str, Any]]:
-        """Find a function by exact name, by 0x address inside it, or by prefix."""
+        """Resolve a seek target: listed name, listed prefix, or any
+        address — the address case asks the server which function
+        contains it, so it works even for functions never listed."""
         q = query.strip()
+        # exact or prefix among the currently listed items first (fast)
+        for fn in self.filtered:
+            if fn["name"] == q:
+                return fn
+        prefix = [fn for fn in self.filtered if fn["name"].lower().startswith(q.lower())]
+        if len(prefix) == 1:
+            return prefix[0]
+        # address (with or without 0x): find its containing function
+        addr: Optional[int]
         try:
             addr = int(q, 16) if q.lower().startswith("0x") else int(q)
         except ValueError:
             addr = None
-        for fn in self.all:
-            if fn["name"] == q or (addr is not None and fn["start_ea"] <= addr < fn["end_ea"]):
+        if addr is None:
+            return None
+        for fn in self.filtered:
+            if fn["start_ea"] <= addr < fn["end_ea"]:
                 return fn
-        prefix_matches = [fn for fn in self.all if fn["name"].lower().startswith(q.lower())]
-        return prefix_matches[0] if len(prefix_matches) == 1 else None
+        result = self.ui.call("get_function_signature", {"addr": f"0x{addr:x}"})
+        if isinstance(result, dict) and not result.get("error"):
+            start = result.get("start_ea")
+            try:
+                start_ea = int(str(start), 16) if start is not None else None
+            except ValueError:
+                start_ea = None
+            if start_ea is None and result.get("function"):
+                # signature tool reports the name; seek by it directly
+                return {"start_ea": addr, "end_ea": addr + 1, "name": result["function"]}
+            if start_ea is not None:
+                return {
+                    "start_ea": start_ea,
+                    "end_ea": start_ea + 1,
+                    "name": result.get("function") or f"0x{addr:x}",
+                }
+        return None
 
 
 class IDATuiApp(App):
@@ -251,17 +308,24 @@ class IDATuiApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
-        total = self.sidebar.reload()
+        shown = self.sidebar.reload()
         self.rebuild_sidebar()
         self.render_main(HELP_TEXT)
-        self.update_status(f"{total} functions loaded — g to seek, type in sidebar to filter")
+        self.update_status(
+            f"{shown} shown / {self.sidebar.total} functions — "
+            "type in the sidebar to search, g to seek"
+        )
 
     def rebuild_sidebar(self) -> None:
         listing = self.query_one("#sidebar-list", ListView)
         listing.clear()
-        for fn in self.sidebar.filtered:
+        for fn in self.sidebar.filtered[: self.sidebar.PAGE]:
             listing.append(
                 ListItem(Label(f"0x{fn['start_ea']:X}  {fn['name']}"), name=fn["name"])
+            )
+        if self.sidebar.total > len(self.sidebar.filtered):
+            listing.append(
+                ListItem(Label(f"... {self.sidebar.total} total — keep typing to narrow"))
             )
 
     # -- rendering ------------------------------------------------------------
@@ -292,8 +356,14 @@ class IDATuiApp(App):
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id != "sidebar-filter":
             return
+        # server-side search: typing re-queries the worker with the pattern,
+        # so renamed functions and anything past the first page are found.
         self.sidebar.apply_filter(event.value)
         self.rebuild_sidebar()
+        shown = len(self.sidebar.filtered)
+        self.update_status(
+            f"{shown} shown / {self.sidebar.total} total — ENTER on a match opens it"
+        )
 
     def on_list_item_selected(self, event: ListView.Selected) -> None:
         index = event.list_view.index if event.list_view.index is not None else 0
@@ -316,9 +386,9 @@ class IDATuiApp(App):
         self.set_focus(prompt)
 
     def action_reload_sidebar(self) -> None:
-        total = self.sidebar.reload()
+        shown = self.sidebar.reload(self.sidebar.current_pattern)
         self.rebuild_sidebar()
-        self.update_status(f"{total} functions reloaded")
+        self.update_status(f"{shown} shown / {self.sidebar.total} total — list refreshed")
 
     def action_xrefs(self) -> None:
         if not self.current_fn:
@@ -392,10 +462,13 @@ class IDATuiApp(App):
         mode = getattr(self, "_prompt_mode", None)
         self._prompt_mode = None
         if mode == "rename" and self.current_fn:
-            self.render_main(self.ui.rename(self.current_fn["name"], value))
-            self.sidebar.reload()
+            old_name = self.current_fn["name"]
+            self.render_main(self.ui.rename(old_name, value))
+            # refresh immediately so the new name is searchable/visible
+            self.current_fn = dict(self.current_fn, name=value)
+            self.sidebar.reload(self.sidebar.current_pattern)
             self.rebuild_sidebar()
-            self.update_status("renamed — r to refresh names")
+            self.update_status(f"renamed {old_name} -> {value}")
         elif mode == "comment" and self.current_fn:
             self.render_main(self.ui.set_comment(self.current_fn["name"], value))
             self.update_status("commented")

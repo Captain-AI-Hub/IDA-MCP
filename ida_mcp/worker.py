@@ -87,8 +87,11 @@ def main(argv: list[str] | None = None) -> int:
         return meta
 
     stop_event = threading.Event()
+    shutdown_save = threading.Event()  # set = save before exit
 
     def on_shutdown(save: bool) -> None:
+        if save:
+            shutdown_save.set()
         stop_event.set()
 
     server = bridge_server.BridgeServer(
@@ -162,7 +165,10 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         # Drain anything queued while shutdown was requested.
         server.state.process_main_calls(timeout=0.0)
-        if not os.environ.get("IDA_MCP_WORKER_NO_SAVE"):
+        # Honor the shutdown request's save flag (default save). The
+        # historical unconditional save corrupted freshly-opened databases
+        # when callers asked for close-without-save.
+        if shutdown_save.is_set() and not os.environ.get("IDA_MCP_WORKER_NO_SAVE"):
             try:
                 _log("saving database")
                 import idc
@@ -170,6 +176,8 @@ def main(argv: list[str] | None = None) -> int:
                 idc.save_database("")
             except Exception as exc:  # noqa: BLE001 - save is best effort
                 _log(f"save failed: {exc}")
+        else:
+            _log("skipping save (close without save)")
         server.stop()
         _log("closing database")
         try:
