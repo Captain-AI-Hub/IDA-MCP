@@ -308,25 +308,44 @@ class IDATuiApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
-        shown = self.sidebar.reload()
-        self.rebuild_sidebar()
         self.render_main(HELP_TEXT)
+        self.update_status("loading function list...")
+        # Initial load off the UI thread: huge binaries take ~1s for the
+        # first page; blocking here makes the app look frozen on startup.
+        import threading
+
+        def work() -> None:
+            from functools import partial
+
+            shown = self.sidebar.reload()
+            self.call_later(partial(self._apply_initial_sidebar, shown))
+
+        threading.Thread(target=work, daemon=True, name="IDA-MCP-TuiInit").start()
+
+    def _apply_initial_sidebar(self, shown: int) -> None:
+        self.rebuild_sidebar()
         self.update_status(
             f"{shown} shown / {self.sidebar.total} functions — "
             "type in the sidebar to search, g to seek"
         )
 
+    # How many rows the sidebar renders at once. Building 1000 ListItems
+    # per keystroke is itself a visible stall; a visible window plus the
+    # count hint keeps scrolling fast and the list informative.
+    _SIDEBAR_ROWS = 200
+
     def rebuild_sidebar(self) -> None:
         listing = self.query_one("#sidebar-list", ListView)
         listing.clear()
-        for fn in self.sidebar.filtered[: self.sidebar.PAGE]:
+        for fn in self.sidebar.filtered[: self._SIDEBAR_ROWS]:
             listing.append(
                 ListItem(Label(f"0x{fn['start_ea']:X}  {fn['name']}"), name=fn["name"])
             )
-        if self.sidebar.total > len(self.sidebar.filtered):
-            listing.append(
-                ListItem(Label(f"... {self.sidebar.total} total — keep typing to narrow"))
-            )
+        extra = self.sidebar.total - len(self.sidebar.filtered)
+        if len(self.sidebar.filtered) >= self._SIDEBAR_ROWS:
+            listing.append(ListItem(Label(f"... showing {self._SIDEBAR_ROWS} of {self.sidebar.total} — keep typing to narrow")))
+        elif extra > 0:
+            listing.append(ListItem(Label(f"... {extra} more — keep typing to narrow")))
 
     # -- rendering ------------------------------------------------------------
 
@@ -343,29 +362,71 @@ class IDATuiApp(App):
         )
 
     def show_function(self, fn: Dict[str, Any]) -> None:
+        """Open a function in the main pane (fetches off the UI thread)."""
         self.current_fn = fn
+        self.update_status(f"loading {fn['name']}...")
+        import threading
+        from functools import partial
+
         target = fn["name"]
-        if self.mode == "disasm":
-            self.render_main(self.ui.disasm(target))
-        else:
-            self.render_main(self.ui.decompile(target))
+        mode = self.mode
+
+        def work() -> None:
+            text = (
+                self.ui.disasm(target) if mode == "disasm" else self.ui.decompile(target)
+            )
+            self.call_later(partial(self._apply_show, fn, text))
+
+        threading.Thread(target=work, daemon=True, name="IDA-MCP-TuiLoad").start()
+
+    def _apply_show(self, fn: Dict[str, Any], text: str) -> None:
+        # Only apply if the user hasn't moved on to another function.
+        if self.current_fn is not fn:
+            return
+        self.render_main(text)
         self.update_status("ok")
 
     # -- sidebar interaction ----------------------------------------------------
 
+    _FILTER_DEBOUNCE = 0.25
+
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id != "sidebar-filter":
             return
-        # server-side search: typing re-queries the worker with the pattern,
-        # so renamed functions and anything past the first page are found.
-        self.sidebar.apply_filter(event.value)
+        # Debounced server-side search: every keystroke is a ~1s bridge
+        # round-trip on huge binaries; running it synchronously freezes the
+        # UI, so debounce, then query off-thread and rebuild on arrival.
+        value = event.value
+        self._filter_seq = getattr(self, "_filter_seq", 0) + 1
+        seq = self._filter_seq
+        self.update_status(f"searching '{value}'...")
+        self.set_timer(self._FILTER_DEBOUNCE, lambda: self._run_filter(seq, value))
+
+    def _run_filter(self, seq: int, value: str) -> None:
+        if seq != getattr(self, "_filter_seq", 0):
+            return  # superseded by a newer keystroke
+        import threading
+        from functools import partial
+
+        def work() -> None:
+            self.sidebar.apply_filter(value)
+            self.call_later(partial(self._apply_filter_result, seq))
+
+        threading.Thread(target=work, daemon=True, name="IDA-MCP-TuiFilter").start()
+
+    def _apply_filter_result(self, seq: int) -> None:
+        if seq != getattr(self, "_filter_seq", 0):
+            return
         self.rebuild_sidebar()
         shown = len(self.sidebar.filtered)
         self.update_status(
             f"{shown} shown / {self.sidebar.total} total — ENTER on a match opens it"
         )
 
-    def on_list_item_selected(self, event: ListView.Selected) -> None:
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        # textual posts ListView.Selected; the old handler name
+        # (on_list_item_selected) never fired, so clicking/entering a
+        # function did nothing.
         index = event.list_view.index if event.list_view.index is not None else 0
         items = self.sidebar.filtered
         if 0 <= index < len(items):
